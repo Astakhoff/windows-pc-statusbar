@@ -59,7 +59,7 @@ internal sealed class BarForm : Form
         leadersBlock.Cursor = Cursors.Hand;
         leadersBlock.Click += (_, _) => OpenConsumers();
         flow.Controls.Clear();
-        flow.Controls.AddRange([blocks[0], cpuGraph, queueBlock, leadersBlock, blocks[1], blocks[2], blocks[3]]);
+        flow.Controls.AddRange([leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], blocks[3]]);
         menu.Items.Add("Настройки…", null, (_, _) => OpenSettings());
         menu.Items.Add("Потребители CPU…", null, (_, _) => OpenConsumers());
         menu.Items.Add("Показать / скрыть панель", null, (_, _) => SetVisible(!Visible));
@@ -92,7 +92,7 @@ internal sealed class BarForm : Form
     void LayoutBlocks()
     {
         float scale = DeviceDpi / 96F;
-        Control[] layout = [blocks[0], cpuGraph, queueBlock, leadersBlock, blocks[1], blocks[2], blocks[3]];
+        Control[] layout = [leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], blocks[3]];
         int available = Screen.FromHandle(Handle).Bounds.Width;
         int gap = Math.Max(2, (int)(3 * scale)), endPadding = (int)(8 * scale);
         var visible = layout.Where(c => c != blocks[3] || settings.ShowTemperature).ToArray();

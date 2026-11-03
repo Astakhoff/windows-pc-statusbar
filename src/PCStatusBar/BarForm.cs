@@ -13,6 +13,13 @@ internal sealed class BarForm : Form
     readonly CpuInsightsProvider insightsProvider = new();
     readonly CpuHistory cpuHistory = new();
     readonly CpuGraph cpuGraph = new();
+    readonly QuotaTicker quotaTicker = new();
+    readonly IQuotaProvider[] quotaProviders = [new CodexQuotaProvider(), new ClaudeQuotaProvider()];
+    readonly CancellationTokenSource quotaCancellation = new();
+    Task<QuotaSnapshot[]>? quotaRequest;
+    QuotaSnapshot[] quotaSnapshots = [QuotaSnapshot.Missing("Кодекс", "Codex app-server", "Ожидание первого чтения", DateTimeOffset.UtcNow), QuotaSnapshot.Missing("Клод", "Claude desktop", "Ожидание первого чтения", DateTimeOffset.UtcNow)];
+    double lastQuotaAttempt = -1000;
+    QuotaDetailsForm? quotaDetails;
     readonly Label queueBlock = new() { Text = "Очередь  —", AccessibleName = "Очередь CPU" };
     readonly Label leadersBlock = new() { Text = "Лидеры CPU  —", AccessibleName = "Основные потребители CPU" };
     readonly Temperature temperature = new();
@@ -43,7 +50,9 @@ internal sealed class BarForm : Form
         StartPosition = FormStartPosition.Manual; AutoScaleMode = AutoScaleMode.Dpi;
         BackColor = Color.FromArgb(23, 26, 32); ForeColor = Color.White; DoubleBuffered = true;
         Font = new Font("Segoe UI", 10F);
-        Controls.Add(flow);
+        Controls.Add(flow); Controls.Add(quotaTicker);
+        quotaTicker.Cursor = Cursors.Hand;
+        quotaTicker.Click += (_, _) => OpenQuotaDetails();
         for (int i = 0; i < blocks.Length; i++)
         {
             blocks[i] = new Label { Text = new[] { "CPU  —", "RAM  —", "C: свободно  —", "GPU  —" }[i], TextAlign = ContentAlignment.MiddleLeft, AutoSize = false, AutoEllipsis = true, Margin = new Padding(4, 3, 4, 3), Padding = new Padding(10, 0, 4, 0), BackColor = Color.FromArgb(32, 36, 43), AccessibleName = new[] { "CPU", "RAM", "C: свободно", "Температуры" }[i] };
@@ -62,6 +71,7 @@ internal sealed class BarForm : Form
         flow.Controls.AddRange([leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], blocks[3]]);
         menu.Items.Add("Настройки…", null, (_, _) => OpenSettings());
         menu.Items.Add("Потребители CPU…", null, (_, _) => OpenConsumers());
+        menu.Items.Add("Лимиты Codex и Claude…", null, (_, _) => OpenQuotaDetails());
         menu.Items.Add("Показать / скрыть панель", null, (_, _) => SetVisible(!Visible));
         var startup = new ToolStripMenuItem("Автозапуск") { CheckOnClick = true };
         startup.Click += (_, _) => { try { Startup.Set(startup.Checked); } catch (Exception e) { MessageBox.Show(e.Message); } };
@@ -73,6 +83,7 @@ internal sealed class BarForm : Form
         ContextMenuStrip = menu; flow.ContextMenuStrip = menu;
         foreach (var block in blocks) block.ContextMenuStrip = menu;
         queueBlock.ContextMenuStrip = leadersBlock.ContextMenuStrip = cpuGraph.ContextMenuStrip = menu;
+        quotaTicker.ContextMenuStrip = menu;
         tray = new NotifyIcon { Icon = SystemIcons.Information, Text = "PCStatusBar — CPU / RAM / C:", ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += (_, _) => OpenSettings();
         ResetRules(); LayoutBlocks();
@@ -122,6 +133,8 @@ internal sealed class BarForm : Form
                 total += control.Width + control.Margin.Horizontal;
             }
             flow.Width = Math.Min(available, total);
+            int left = (int)(8 * scale);
+            quotaTicker.Bounds = new Rectangle(left, 0, Math.Max(0, ClientSize.Width - flow.Width - left * 2), ClientSize.Height);
         }
         finally { flow.ResumeLayout(true); ResumeLayout(true); }
     }
@@ -171,6 +184,7 @@ internal sealed class BarForm : Form
         busy = true;
         try
         {
+            RefreshQuotas();
             double now = clock.Elapsed.TotalSeconds;
             bool poll = now - lastPoll >= settings.PollSeconds, disk = now - lastDisk >= settings.DiskSeconds;
             if (poll || disk)
@@ -227,6 +241,10 @@ internal sealed class BarForm : Form
             cpuGraph.UpdateHistory(cpuHistory.Window(now), now, Math.Max(5, 3 * settings.PollSeconds));
             tips.SetToolTip(cpuGraph, cpuGraph.AccessibleDescription + ".\nСлева −60 секунд, справа сейчас; вертикальная шкала 0–100%. История только в памяти. Разрывы означают отсутствие отсчётов.");
             LayoutBlocks();
+            var quotaNow = DateTimeOffset.UtcNow;
+            quotaTicker.SetMessage(QuotaText.Ticker(quotaSnapshots, quotaNow));
+            tips.SetToolTip(quotaTicker, QuotaText.Ticker(quotaSnapshots, quotaNow) + "\nНажмите для источников, дат сброса и причин отсутствия данных. Наведение останавливает прокрутку.");
+            quotaDetails?.UpdateSnapshots(quotaSnapshots, quotaNow);
         }
         catch (Exception e) { Log.Write(e.ToString()); }
         finally { busy = false; if (resetPending && !closing) ResetRules(); if (closing && !IsDisposed && IsHandleCreated) BeginInvoke(Close); }
@@ -255,6 +273,28 @@ internal sealed class BarForm : Form
         consumers.UpdateReading(insights, insights != null && clock.Elapsed.TotalSeconds - insights.At <= 9);
         consumers.Show(); consumers.Activate();
     }
+    void RefreshQuotas()
+    {
+        if (quotaRequest?.IsCompleted == true)
+        {
+            if (quotaRequest.IsCompletedSuccessfully) quotaSnapshots = quotaRequest.Result;
+            quotaRequest = null;
+        }
+        if (quotaRequest == null && clock.Elapsed.TotalSeconds - lastQuotaAttempt >= 60 && !quotaCancellation.IsCancellationRequested)
+        {
+            lastQuotaAttempt = clock.Elapsed.TotalSeconds;
+            quotaRequest = Task.Run(() => Task.WhenAll(quotaProviders.Select(p => p.ReadAsync(quotaCancellation.Token))), quotaCancellation.Token);
+        }
+    }
+    void OpenQuotaDetails()
+    {
+        if (quotaDetails != null) { quotaDetails.Activate(); return; }
+        quotaDetails = new QuotaDetailsForm();
+        quotaDetails.RefreshRequested += (_, _) => { lastQuotaAttempt = -1000; RefreshQuotas(); };
+        quotaDetails.FormClosed += (_, _) => quotaDetails = null;
+        quotaDetails.UpdateSnapshots(quotaSnapshots, DateTimeOffset.UtcNow);
+        quotaDetails.Show(); quotaDetails.Activate();
+    }
     void SetVisible(bool visible)
     {
         if (visible) { Show(); Register(); } else { Unregister(); Hide(); }
@@ -271,6 +311,7 @@ internal sealed class BarForm : Form
             Gpu = gpu, Startup = Startup.Enabled, States = evaluators.Select(e => e.State.ToString()), MaximizedBounds = maximizedBounds,
             CpuInsights = insights, CpuHistory = cpuHistory.Window(clock.Elapsed.TotalSeconds),
             ContentWidth = flow.Width, Blocks = flow.Controls.Cast<Control>().Where(c => c.Visible).Select(c => new { c.AccessibleName, c.Text, c.Bounds }),
+            Quotas = quotaSnapshots, TickerBounds = quotaTicker.Bounds, TickerText = QuotaText.Ticker(quotaSnapshots, DateTimeOffset.UtcNow),
             Windows = Application.OpenForms.Cast<Form>().Select(f => new { f.Text, f.Visible, f.Bounds })
         };
         Directory.CreateDirectory(Settings.Folder);
@@ -327,9 +368,10 @@ internal sealed class BarForm : Form
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         if (busy) { closing = true; timer.Stop(); Unregister(); e.Cancel = true; return; }
-        closing = true; timer.Stop(); Unregister();
+        closing = true; timer.Stop(); Unregister(); quotaCancellation.Cancel();
+        try { quotaRequest?.Wait(750); } catch (AggregateException) { }
         SystemEvents.DisplaySettingsChanged -= DisplayChanged; SystemEvents.PowerModeChanged -= PowerChanged;
-        dialog?.Close(); consumers?.Close(); tray.Visible = false;
+        dialog?.Close(); consumers?.Close(); quotaDetails?.Close(); tray.Visible = false;
         base.OnFormClosing(e);
     }
     protected override void Dispose(bool disposing)

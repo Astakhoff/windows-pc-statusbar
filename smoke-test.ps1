@@ -28,6 +28,8 @@ Check (@($shown.Metrics | Where-Object { $null -ne $_.Percent }).Count -eq 3) 'a
 Check ($null -ne $shown.CpuInsights.Queue -and $shown.CpuInsights.Queue -ge 0) 'real CPU queue counter available'
 Check ($shown.CpuInsights.HasBaseline -and @($shown.CpuInsights.Groups).Count -gt 0) 'real CPU consumers measured over interval'
 Check (@($shown.CpuHistory | Where-Object { $null -ne $_.Value }).Count -gt 0) 'CPU graph contains measured samples'
+Check (@($shown.Quotas).Count -eq 2 -and @($shown.Quotas | ForEach-Object { $_.Windows }).Count -eq 4) 'ticker exposes both windows for both providers'
+Check ($shown.TickerBounds.Width -gt 0 -and $shown.TickerBounds.Right -le ($shown.Bounds.Width - $shown.ContentWidth)) 'ticker stays to the left of system blocks'
 Check ($shown.Bounds.Bottom -le $shown.Taskbar.Top) 'panel above bottom taskbar'
 Command '--hide'
 $hidden = Snapshot

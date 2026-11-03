@@ -21,7 +21,10 @@ internal sealed class SettingsForm : Form
         Row("Монитор", monitor); apply.Add(() => Value.Monitor = monitor.SelectedIndex == 0 ? "" : monitor.Text);
         Number("Высота панели (логические px)", Value.Height, 32, 60, v => Value.Height = (int)v);
         var overlay = new CheckBox { Checked = Value.TaskbarOverlay, AutoSize = true };
-        Row("Фиксированное наложение внутри taskbar", overlay); apply.Add(() => Value.TaskbarOverlay = overlay.Checked);
+        Row("Наложение внутри taskbar", overlay); apply.Add(() => Value.TaskbarOverlay = overlay.Checked);
+        var adaptive = new CheckBox { Checked = Value.OverlayAdaptive, AutoSize = true };
+        Row("Автосжатие по размеру и занятым областям taskbar", adaptive); apply.Add(() => Value.OverlayAdaptive = adaptive.Checked);
+        Number("Базовая ширина taskbar для пропорций (0 = авто)", Value.OverlayReferenceWidth, 0, 30000, v => Value.OverlayReferenceWidth = (int)v);
         Number("Отступ слева от края taskbar (логические px)", Value.OverlayLeft, 0, 20000, v => Value.OverlayLeft = (int)v);
         Number("Отступ справа от края taskbar (логические px)", Value.OverlayRight, 0, 20000, v => Value.OverlayRight = (int)v);
         Number("CPU / RAM: интервал (сек.)", Value.PollSeconds, 1, 10, v => Value.PollSeconds = (int)v);

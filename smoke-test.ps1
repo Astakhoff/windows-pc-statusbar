@@ -23,6 +23,7 @@ Command '--show'
 Start-Sleep -Seconds 3
 $shown = Snapshot
 if (!$shown.CpuInsights.HasBaseline) { Start-Sleep -Seconds 4; $shown = Snapshot }
+if($shown.TaskbarOverlay -and $shown.OverlayAdaptive){for($i=0;$i -lt 5 -and $shown.OverlayStatus -ne 'adaptive';$i++){Start-Sleep -Seconds 1;$shown=Snapshot}}
 Check ($shown.Visible -and ($shown.TaskbarOverlay -or $shown.registered)) 'visible panel in selected placement mode'
 Check (@($shown.Metrics | Where-Object { $null -ne $_.Percent }).Count -eq 4) 'CPU RAM and both real disk metrics available'
 $diskBlocks=@($shown.Blocks | Where-Object AccessibleName -In @('C: свободно','Разделитель дисков','D: свободно'))
@@ -32,6 +33,14 @@ Check ($shown.CpuInsights.HasBaseline -and @($shown.CpuInsights.Groups).Count -g
 Check (@($shown.CpuHistory | Where-Object { $null -ne $_.Value }).Count -gt 0) 'CPU graph contains measured samples'
 Check (@($shown.TickerTags).Count -eq 3 -and @($shown.TickerTags | Where-Object { $_.Provider -eq 'Codex' -and $_.Period -ne 'week' }).Count -eq 0) 'three tagged items with Codex short window hidden'
 Check ($shown.TickerBounds.Width -gt 0 -and $shown.TickerBounds.Right -le ($shown.Bounds.Width - $shown.ContentWidth)) 'ticker stays to the left of system blocks'
+$protected=$true
+if($shown.TaskbarOverlay -and $shown.OverlayAdaptive){
+    $ratio=$shown.ShellFrame.Dpi/[double]$shown.ShellMeasurement.Dpi
+    $guard=[Math]::Max(4,[Math]::Round(10*$shown.ShellFrame.Dpi/96))
+    $protected=$null -ne $shown.ShellMeasurement -and $shown.Bounds.Left -ge ($shown.ShellFrame.Bounds.Left+[Math]::Ceiling($shown.ShellMeasurement.OccupiedLeft*$ratio)+$guard) -and $shown.Bounds.Right -le ($shown.ShellFrame.Bounds.Right-[Math]::Ceiling($shown.ShellMeasurement.OccupiedRight*$ratio)-$guard)
+}
+Check $protected 'adaptive overlay respects measured application and tray regions'
+Check (@($shown.Blocks|Where-Object {$_.Bounds.Right -gt $shown.ContentWidth -or $_.Bounds.Bottom -gt $shown.Bounds.Height}).Count -eq 0) 'visible blocks fit their current viewport'
 if($shown.TaskbarOverlay){Check (!$shown.registered -and $shown.Bounds.Top -ge $shown.Taskbar.Top -and $shown.Bounds.Bottom -le $shown.Taskbar.Bottom) 'fixed overlay is inside taskbar without AppBar reservation'}
 else{Check ($shown.Bounds.Bottom -le $shown.Taskbar.Top) 'panel above bottom taskbar'}
 Command '--hide'

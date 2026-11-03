@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace PCStatusBar;
 
-internal record Reading(double? Percent, string Text, string Detail, double At);
+internal record Reading(double? Percent, string Text, string Detail, double At, ulong? AvailableBytes = null, ulong? TotalBytes = null);
 internal sealed class Metrics
 {
     readonly CpuDelta cpu = new();
@@ -28,6 +28,6 @@ internal sealed class Metrics
         string label = root.TrimEnd('\\') + " свободно";
         if (!Native.GetDiskFreeSpaceEx(root, out var available, out var total, out _)) return new(null, label + "  —", $"GetDiskFreeSpaceExW: {root} недоступен", now);
         var percent = Units.Percent(available, total);
-        return new(percent, $"{label}  {Units.GiB(available):0.0} GiB   {percent:0}%", $"{root}, доступно текущему пользователю {Units.GiB(available):0.00} из {Units.GiB(total):0.00} GiB (с учётом квот). GetDiskFreeSpaceExW; {percent:0.00}%", now);
+        return new(percent, $"{label}  {Units.GiB(available):0.0} GiB   {percent:0}%", $"{root}, доступно текущему пользователю {Units.GiB(available):0.00} из {Units.GiB(total):0.00} GiB (с учётом квот). GetDiskFreeSpaceExW; {percent:0.00}%", now, available, total);
     }
 }

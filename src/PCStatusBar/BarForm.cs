@@ -22,6 +22,7 @@ internal sealed class BarForm : Form
     QuotaDetailsForm? quotaDetails;
     readonly Label queueBlock = new() { Text = "Очередь  —", AccessibleName = "Очередь CPU" };
     readonly Label leadersBlock = new() { Text = "Лидеры CPU  —", AccessibleName = "Основные потребители CPU" };
+    readonly Label moreBlock = new() { Text = "…", AccessibleName = "Все показатели", TextAlign = ContentAlignment.MiddleCenter, Cursor = Cursors.Hand, ForeColor = Color.Silver };
     readonly Temperature temperature = new();
     readonly NotifyIcon tray;
     readonly ToolTip tips = new() { AutoPopDelay = 15000 };
@@ -42,6 +43,14 @@ internal sealed class BarForm : Form
     nint? inspectionStyle;
     Rectangle? maximizedBounds;
     bool overlayBehindFullscreen;
+    Task<TaskbarMeasurement?>? shellRequest;
+    TaskbarMeasurement? shellMeasurement;
+    TaskbarFrame? shellFrame;
+    double lastShellAttempt = -100;
+    string overlayStatus = "";
+    bool compactLayout;
+    string[] hiddenBlocks = [];
+    int previewWidth;
     protected override bool ShowWithoutActivation => true;
     protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x08000080; return p; } }
 
@@ -69,9 +78,11 @@ internal sealed class BarForm : Form
         leadersBlock.Cursor = Cursors.Hand;
         leadersBlock.Click += (_, _) => OpenConsumers();
         flow.Controls.Clear();
-        flow.Controls.AddRange([leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], blocks[3], blocks[4]]);
+        flow.Controls.AddRange([leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], blocks[3], blocks[4], moreBlock]);
+        moreBlock.Click += (_, _) => ShowAllMetrics();
         menu.Items.Add("Настройки…", null, (_, _) => OpenSettings());
         menu.Items.Add("Потребители CPU…", null, (_, _) => OpenConsumers());
+        menu.Items.Add("Все показатели…", null, (_, _) => ShowAllMetrics());
         menu.Items.Add("Лимиты Codex и Claude…", null, (_, _) => OpenQuotaDetails());
         menu.Items.Add("Показать / скрыть панель", null, (_, _) => SetVisible(!Visible));
         var startup = new ToolStripMenuItem("Автозапуск") { CheckOnClick = true };
@@ -85,6 +96,7 @@ internal sealed class BarForm : Form
         foreach (var block in blocks) block.ContextMenuStrip = menu;
         queueBlock.ContextMenuStrip = leadersBlock.ContextMenuStrip = cpuGraph.ContextMenuStrip = menu;
         quotaTicker.ContextMenuStrip = menu;
+        moreBlock.ContextMenuStrip = menu;
         tray = new NotifyIcon { Icon = SystemIcons.Information, Text = "PCStatusBar — CPU / RAM / C:", ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += (_, _) => OpenSettings();
         ResetRules(); LayoutBlocks();
@@ -105,35 +117,41 @@ internal sealed class BarForm : Form
     {
         float scale = DeviceDpi / 96F;
         Control[] layout = [leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], blocks[3], blocks[4]];
-        int available = settings.TaskbarOverlay ? Math.Max(1, ClientSize.Width) : Screen.FromHandle(Handle).Bounds.Width;
+        int available = settings.TaskbarOverlay ? Math.Max(0, ClientSize.Width) : Screen.FromHandle(Handle).Bounds.Width;
         int gap = Math.Max(2, (int)(3 * scale)), endPadding = (int)(8 * scale);
-        var visible = layout.Where(c => c != blocks[4] || settings.ShowTemperature).ToArray();
-        var widths = visible.Select(control => control is Label label
-            ? label.GetPreferredSize(new Size(int.MaxValue, int.MaxValue)).Width + (int)Math.Ceiling(4 * scale)
-            : (int)(144 * scale)).ToArray();
-        int budget = Math.Max(1, available - visible.Length * gap * 2 - endPadding);
-        // Normal layout follows the actual text. Constrain only when the entire row cannot fit the monitor.
-        int excess = widths.Sum() - budget;
-        int leadersIndex = Array.IndexOf(visible, leadersBlock);
-        if (excess > 0 && leadersIndex >= 0)
-        {
-            int reduction = Math.Min(excess, Math.Max(0, widths[leadersIndex] - (int)(100 * scale)));
-            widths[leadersIndex] -= reduction;
-        }
-        float fit = Math.Min(1, budget / (float)Math.Max(1, widths.Sum()));
         SuspendLayout(); flow.SuspendLayout();
         try
         {
-            blocks[4].Visible = settings.ShowTemperature;
-            int total = endPadding;
-            for (int i = 0; i < visible.Length; i++)
+            double now = clock.Elapsed.TotalSeconds;
+            bool Fresh(int i) => readings[i]?.Percent != null && now - readings[i]!.At <= Math.Max(5, 3 * (i >= 2 ? settings.DiskSeconds : settings.PollSeconds));
+            string[] fallback = ["CPU  —", "RAM  —", "C: свободно  —", "D: свободно  —"];
+            for (int i = 0; i < readings.Length; i++) blocks[i].Text = (readings[i]?.Text ?? fallback[i]) + (readings[i]?.Percent != null && !Fresh(i) ? " (устарело)" : "");
+            blocks[4].Text = gpu?.Percent != null && now - gpu.At <= 6 ? gpu.Text : "GPU  —";
+            queueBlock.Text = insights?.Queue != null && now - insights.At <= 9 ? $"Очередь  {insights.Queue}" : "Очередь  —";
+            var fullText = layout.Select(c => c.Text).ToArray();
+            int Measure(Control c) => c is Label label ? label.GetPreferredSize(new Size(int.MaxValue, int.MaxValue)).Width + (int)Math.Ceiling(4 * scale) : (int)(144 * scale);
+            var natural = layout.Select(Measure).ToArray();
+            blocks[0].Text = Fresh(0) ? $"CPU {readings[0]!.Percent:0}%" : "CPU —";
+            blocks[1].Text = Fresh(1) ? $"RAM {readings[1]!.Percent:0}%" : "RAM —";
+            for (int i = 2; i <= 3; i++) blocks[i].Text = Fresh(i) && readings[i]!.AvailableBytes.HasValue ? $"{(i == 2 ? "C:" : "D:")} {Units.GiB(readings[i]!.AvailableBytes!.Value):0} GiB" : (i == 2 ? "C: —" : "D: —");
+            queueBlock.Text = insights?.Queue != null && now - insights.At <= 9 ? $"Оч. {insights.Queue}" : "Оч. —";
+            var compact = layout.Select(Measure).ToArray(); compact[0] = Math.Min(compact[0], (int)(160 * scale)); compact[3] = (int)(90 * scale);
+            bool[] enabled = [true, true, true, true, true, true, true, settings.ShowTemperature];
+            var plan = ResponsiveLayout.Calculate(available, natural, compact, enabled, [3, 0, 7, 1, 6, 5, 4, 2], gap, endPadding, (int)(240 * scale), (int)(24 * scale), (int)(16 * scale));
+            compactLayout = plan.Compact;
+            hiddenBlocks = layout.Where((c, i) => enabled[i] && !plan.Visible[i]).Select(c => c.AccessibleName ?? "").ToArray();
+            int height = Math.Max(1, Math.Min((int)(settings.Height * scale) - 6, ClientSize.Height - 6));
+            for (int i = 0; i < layout.Length; i++)
             {
-                var control = visible[i];
+                var control = layout[i];
+                if (!plan.Compact) control.Text = fullText[i];
+                control.Visible = plan.Visible[i];
                 control.Margin = new Padding(gap, 3, gap, 3);
-                control.Size = new Size(Math.Max(1, (int)(widths[i] * fit)), Math.Max(24, (int)(settings.Height * scale) - 6));
-                total += control.Width + control.Margin.Horizontal;
+                control.Size = new Size(Math.Max(1, plan.Widths[i]), height);
             }
-            flow.Width = Math.Min(available, total);
+            moreBlock.Visible = plan.OverflowWidth > 0; moreBlock.Margin = new Padding(gap, 3, gap, 3); moreBlock.Size = new Size(Math.Max(1, plan.OverflowWidth), height);
+            tips.SetToolTip(moreBlock, "Все показатели. Не поместились: " + string.Join(", ", hiddenBlocks));
+            flow.Width = plan.ContentWidth;
             int left = (int)(8 * scale);
             quotaTicker.Bounds = new Rectangle(left, 0, Math.Max(0, ClientSize.Width - flow.Width - left * 2), ClientSize.Height);
         }
@@ -171,13 +189,30 @@ internal sealed class BarForm : Form
             var b = screen.Bounds;
             if (settings.TaskbarOverlay)
             {
-                var taskbar = Native.AppBarData.For(0);
-                if (Native.SHAppBarMessage(5, ref taskbar) == 0) return;
-                var t = taskbar.Rect.Rectangle;
-                if (t.Width <= t.Height) { Log.Write("Фиксированное наложение требует горизонтального taskbar"); return; }
-                var rect = OverlayGeometry.Calculate(t, settings.OverlayLeft, settings.OverlayRight, settings.Height, DeviceDpi / 96.0);
-                Native.SetWindowPos(Handle, -1, rect.X, rect.Y, rect.Width, rect.Height, 0x10);
-                overlayBehindFullscreen = false; LayoutBlocks(); return;
+                var frame = TaskbarOverlay.FindForMonitor(screen.Bounds);
+                if (frame == null || frame.Bounds.Width <= frame.Bounds.Height) return;
+                Rectangle rect;
+                if (settings.OverlayAdaptive)
+                {
+                    RefreshShellMeasurement(frame);
+                    if (settings.OverlayReferenceWidth == 0)
+                    {
+                        settings.OverlayReferenceWidth = Math.Max(1, (int)Math.Round(frame.Bounds.Width / (frame.Dpi / 96.0)));
+                        try { settings.Save(); } catch (Exception e) { Log.Write(e.Message); }
+                    }
+                    if (shellMeasurement?.Handle == frame.Handle && DateTimeOffset.UtcNow - shellMeasurement.At <= TimeSpan.FromSeconds(15))
+                    {
+                        double ratio = frame.Dpi / (double)shellMeasurement.Dpi;
+                        rect = OverlayGeometry.Adaptive(frame.Bounds, settings.OverlayReferenceWidth, settings.OverlayLeft, settings.OverlayRight, settings.Height, frame.Dpi / 96.0,
+                            (int)Math.Ceiling(shellMeasurement.OccupiedLeft * ratio), (int)Math.Ceiling(shellMeasurement.OccupiedRight * ratio));
+                        overlayStatus = rect.Width > 0 ? "adaptive" : "no-free-space";
+                    }
+                    else { rect = new(frame.Bounds.Left, frame.Bounds.Top, 0, Math.Min(h, frame.Bounds.Height)); overlayStatus = "awaiting-taskbar-layout"; }
+                }
+                else { rect = OverlayGeometry.Calculate(frame.Bounds, settings.OverlayLeft, settings.OverlayRight, settings.Height, frame.Dpi / 96.0); overlayStatus = "fixed"; }
+                if (previewWidth > 0 && rect.Width > previewWidth) rect = new(rect.Right - previewWidth, rect.Top, previewWidth, rect.Height);
+                if (Bounds != rect) Native.SetWindowPos(Handle, overlayBehindFullscreen ? 1 : -1, rect.X, rect.Y, rect.Width, rect.Height, 0x10);
+                LayoutBlocks(); return;
             }
             var data = Native.AppBarData.For(Handle); data.Edge = 3;
             data.Rect = new Native.Rect { Left = b.Left, Top = b.Top, Right = b.Right, Bottom = b.Bottom };
@@ -199,6 +234,7 @@ internal sealed class BarForm : Form
             RefreshQuotas();
             if (settings.TaskbarOverlay && Visible)
             {
+                PositionBar();
                 var screen = Screen.FromHandle(Handle);
                 bool fullscreen = TaskbarOverlay.FullscreenForeground(Handle, screen.Bounds);
                 if (!fullscreen || !overlayBehindFullscreen) Native.SetWindowPos(Handle, fullscreen ? 1 : -1, 0, 0, 0, 0, 0x13);
@@ -255,7 +291,7 @@ internal sealed class BarForm : Form
                 blocks[i].ForeColor = state switch { Severity.Green => Color.FromArgb(115, 214, 158), Severity.Yellow => Color.FromArgb(250, 209, 94), Severity.Red => Color.FromArgb(255, 119, 125), _ => Color.Silver };
                 var rule = new[] { settings.Cpu, settings.Ram, settings.Disk, settings.Disk }[i];
                 string status = state switch { Severity.Green => "нормальный уровень", Severity.Yellow => "внимание", Severity.Red => "высокий уровень внимания", _ => "нет достоверных свежих данных" };
-                tips.SetToolTip(blocks[i], $"{reading?.Detail}\nСостояние: {status}.\nЖёлтый {rule.Yellow}%, красный {rule.Red}%; ухудшение {rule.RiseSeconds} с, восстановление {rule.RecoverSeconds} с, запас {rule.Margin} п.п. Цвет учитывает устойчивое превышение и восстановление.");
+                tips.SetToolTip(blocks[i], $"{reading?.Text}\n{reading?.Detail}\nСостояние: {status}.\nЖёлтый {rule.Yellow}%, красный {rule.Red}%; ухудшение {rule.RiseSeconds} с, восстановление {rule.RecoverSeconds} с, запас {rule.Margin} п.п. Цвет учитывает устойчивое превышение и восстановление.");
             }
             cpuGraph.LineColor = blocks[0].ForeColor;
             cpuGraph.UpdateHistory(cpuHistory.Window(now), now, Math.Max(5, 3 * settings.PollSeconds));
@@ -293,6 +329,27 @@ internal sealed class BarForm : Form
         consumers.UpdateReading(insights, insights != null && clock.Elapsed.TotalSeconds - insights.At <= 9);
         consumers.Show(); consumers.Activate();
     }
+    void RefreshShellMeasurement(TaskbarFrame frame)
+    {
+        if (shellFrame != frame) { shellFrame = frame; lastShellAttempt = -100; }
+        if (shellRequest?.IsCompleted == true)
+        {
+            if (shellRequest.IsCompletedSuccessfully && shellRequest.Result is { } measured && measured.Handle == frame.Handle) shellMeasurement = measured;
+            shellRequest = null;
+        }
+        if (shellRequest == null && clock.Elapsed.TotalSeconds - lastShellAttempt >= 3)
+        {
+            lastShellAttempt = clock.Elapsed.TotalSeconds;
+            shellRequest = Task.Run(() => TaskbarOverlay.ReadOccupied(frame));
+        }
+    }
+    void ShowAllMetrics()
+    {
+        var lines = readings.Select((r, i) => r?.Text ?? new[] { "CPU —", "RAM —", "C: —", "D: —" }[i]).ToList();
+        lines.Add(gpu?.Text ?? "GPU —"); lines.Add(insights?.Queue != null ? $"Очередь CPU: {insights.Queue}" : "Очередь CPU: —");
+        lines.AddRange(insights?.Groups.Take(5).Select(g => $"{g.Name}: {g.CpuPercent:0.0}%") ?? []);
+        MessageBox.Show(this, string.Join(Environment.NewLine, lines), "Снимок всех показателей", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
     void RefreshQuotas()
     {
         if (quotaRequest?.IsCompleted == true)
@@ -324,7 +381,8 @@ internal sealed class BarForm : Form
         var taskbar = Native.AppBarData.For(0); Native.SHAppBarMessage(5, ref taskbar);
         var state = Native.AppBarData.For(0);
         var snapshot = new {
-            Visible, registered, Bounds, DeviceDpi, settings.TaskbarOverlay, settings.OverlayLeft, settings.OverlayRight,
+            Visible, registered, Bounds, DeviceDpi, settings.TaskbarOverlay, settings.OverlayLeft, settings.OverlayRight, settings.OverlayAdaptive, settings.OverlayReferenceWidth,
+            OverlayStatus = overlayStatus, ShellMeasurement = shellMeasurement, ShellFrame = shellFrame, CompactLayout = compactLayout, HiddenBlocks = hiddenBlocks, PreviewWidth = previewWidth,
             Monitors = Screen.AllScreens.Select(s => new { s.DeviceName, s.Primary, s.Bounds, s.WorkingArea }),
             Taskbar = taskbar.Rect.Rectangle, TaskbarEdge = taskbar.Edge, TaskbarState = (ulong)Native.SHAppBarMessage(4, ref state),
             Metrics = readings.Select(r => new { r?.Text, r?.Percent, r?.Detail, AgeSeconds = r == null ? (double?)null : clock.Elapsed.TotalSeconds - r.At }),
@@ -385,7 +443,8 @@ internal sealed class BarForm : Form
         else if (m.Msg == Program.ControlMessage)
         {
             int cmd = (int)m.WParam;
-            BeginInvoke(() => { if (cmd == 1) Close(); else if (cmd == 2) SetVisible(false); else if (cmd == 3) SetVisible(true); else if (cmd == 4) WriteDiagnostics(); else if (cmd == 5) Inspect(true); else if (cmd == 6) Inspect(false); else if (cmd == 7) CheckMaximized(); else if (cmd == 8) SetOverlay(true); else if (cmd == 9) SetOverlay(false); else if (cmd == 10) WriteTaskbarRegions(); else OpenSettings(); });
+            int width = (int)m.LParam;
+            BeginInvoke(() => { if (cmd == 1) Close(); else if (cmd == 2) SetVisible(false); else if (cmd == 3) SetVisible(true); else if (cmd == 4) WriteDiagnostics(); else if (cmd == 5) Inspect(true); else if (cmd == 6) Inspect(false); else if (cmd == 7) CheckMaximized(); else if (cmd == 8) SetOverlay(true); else if (cmd == 9) SetOverlay(false); else if (cmd == 10) WriteTaskbarRegions(); else if (cmd == 11) { previewWidth = Math.Clamp(width, 0, 30000); PositionBar(); } else OpenSettings(); });
         }
         else if (m.Msg is 0x02E0 or 0x007E) QueuePosition();
         base.WndProc(ref m);

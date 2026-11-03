@@ -46,7 +46,7 @@ internal sealed class BarForm : Form
         Controls.Add(flow);
         for (int i = 0; i < blocks.Length; i++)
         {
-            blocks[i] = new Label { TextAlign = ContentAlignment.MiddleLeft, AutoSize = false, Margin = new Padding(4, 3, 4, 3), Padding = new Padding(10, 0, 4, 0), BackColor = Color.FromArgb(32, 36, 43), AccessibleName = new[] { "CPU", "RAM", "C: свободно", "Температуры" }[i] };
+            blocks[i] = new Label { Text = new[] { "CPU  —", "RAM  —", "C: свободно  —", "GPU  —" }[i], TextAlign = ContentAlignment.MiddleLeft, AutoSize = false, AutoEllipsis = true, Margin = new Padding(4, 3, 4, 3), Padding = new Padding(10, 0, 4, 0), BackColor = Color.FromArgb(32, 36, 43), AccessibleName = new[] { "CPU", "RAM", "C: свободно", "Температуры" }[i] };
             flow.Controls.Add(blocks[i]);
             blocks[i].Paint += (sender, e) => { var label = (Label)sender!; using var brush = new SolidBrush(label.ForeColor); e.Graphics.FillRectangle(brush, 0, 4, 3, Math.Max(1, label.Height - 8)); };
             blocks[i].DoubleClick += (_, _) => OpenSettings();
@@ -92,20 +92,38 @@ internal sealed class BarForm : Form
     void LayoutBlocks()
     {
         float scale = DeviceDpi / 96F;
-        (Control control, int width)[] layout = [(blocks[0], 125), (cpuGraph, 230), (queueBlock, 145), (leadersBlock, 660), (blocks[1], 305), (blocks[2], 285), (blocks[3], 130)];
-        blocks[3].Visible = settings.ShowTemperature;
+        Control[] layout = [blocks[0], cpuGraph, queueBlock, leadersBlock, blocks[1], blocks[2], blocks[3]];
         int available = Screen.FromHandle(Handle).Bounds.Width;
-        float fit = Math.Min(1, available / (float)(layout.Where(x => x.control != blocks[3] || settings.ShowTemperature).Sum(x => x.width + 8) * scale + 12 * scale));
-        int total = 0;
-        foreach (var (control, width) in layout)
+        int gap = Math.Max(2, (int)(3 * scale)), endPadding = (int)(8 * scale);
+        var visible = layout.Where(c => c != blocks[3] || settings.ShowTemperature).ToArray();
+        var widths = visible.Select(control => control is Label label
+            ? label.GetPreferredSize(new Size(int.MaxValue, int.MaxValue)).Width + (int)Math.Ceiling(4 * scale)
+            : (int)(144 * scale)).ToArray();
+        int budget = Math.Max(1, available - visible.Length * gap * 2 - endPadding);
+        // Normal layout follows the actual text. Constrain only when the entire row cannot fit the monitor.
+        int excess = widths.Sum() - budget;
+        int leadersIndex = Array.IndexOf(visible, leadersBlock);
+        if (excess > 0 && leadersIndex >= 0)
         {
-            if (control == blocks[3] && !settings.ShowTemperature) continue;
-            control.Margin = new Padding((int)(4 * scale), 3, (int)(4 * scale), 3);
-            control.Width = (int)(width * scale * fit); control.Height = Math.Max(24, (int)(settings.Height * scale) - 6);
-            total += control.Width + control.Margin.Horizontal;
+            int reduction = Math.Min(excess, Math.Max(0, widths[leadersIndex] - (int)(100 * scale)));
+            widths[leadersIndex] -= reduction;
         }
-        flow.Width = Math.Min(available, total + (int)(12 * scale));
-        if (gpu == null) { blocks[3].Text = "GPU  —"; blocks[3].ForeColor = Color.Silver; }
+        float fit = Math.Min(1, budget / (float)Math.Max(1, widths.Sum()));
+        SuspendLayout(); flow.SuspendLayout();
+        try
+        {
+            blocks[3].Visible = settings.ShowTemperature;
+            int total = endPadding;
+            for (int i = 0; i < visible.Length; i++)
+            {
+                var control = visible[i];
+                control.Margin = new Padding(gap, 3, gap, 3);
+                control.Size = new Size(Math.Max(1, (int)(widths[i] * fit)), Math.Max(24, (int)(settings.Height * scale) - 6));
+                total += control.Width + control.Margin.Horizontal;
+            }
+            flow.Width = Math.Min(available, total);
+        }
+        finally { flow.ResumeLayout(true); ResumeLayout(true); }
     }
     void Register()
     {
@@ -208,6 +226,7 @@ internal sealed class BarForm : Form
             cpuGraph.LineColor = blocks[0].ForeColor;
             cpuGraph.UpdateHistory(cpuHistory.Window(now), now, Math.Max(5, 3 * settings.PollSeconds));
             tips.SetToolTip(cpuGraph, cpuGraph.AccessibleDescription + ".\nСлева −60 секунд, справа сейчас; вертикальная шкала 0–100%. История только в памяти. Разрывы означают отсутствие отсчётов.");
+            LayoutBlocks();
         }
         catch (Exception e) { Log.Write(e.ToString()); }
         finally { busy = false; if (resetPending && !closing) ResetRules(); if (closing && !IsDisposed && IsHandleCreated) BeginInvoke(Close); }
@@ -251,6 +270,7 @@ internal sealed class BarForm : Form
             Metrics = readings.Select(r => new { r?.Text, r?.Percent, r?.Detail, AgeSeconds = r == null ? (double?)null : clock.Elapsed.TotalSeconds - r.At }),
             Gpu = gpu, Startup = Startup.Enabled, States = evaluators.Select(e => e.State.ToString()), MaximizedBounds = maximizedBounds,
             CpuInsights = insights, CpuHistory = cpuHistory.Window(clock.Elapsed.TotalSeconds),
+            ContentWidth = flow.Width, Blocks = flow.Controls.Cast<Control>().Where(c => c.Visible).Select(c => new { c.AccessibleName, c.Text, c.Bounds }),
             Windows = Application.OpenForms.Cast<Form>().Select(f => new { f.Text, f.Visible, f.Bounds })
         };
         Directory.CreateDirectory(Settings.Folder);

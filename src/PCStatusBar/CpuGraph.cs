@@ -24,8 +24,7 @@ internal sealed class CpuGraph : Control
     {
         base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         float scale = DeviceDpi / 96F;
-        int labelWidth = (int)(52 * scale), left = labelWidth + 3, right = Width - 5, top = 5, bottom = Height - 5;
-        TextRenderer.DrawText(e.Graphics, "60 с", Font, new Rectangle(4, 0, labelWidth, Height), ForeColor, TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        int left = 5, right = Width - 5, top = 5, bottom = Height - 5;
         if (right <= left || bottom <= top) return;
         using var grid = new Pen(Color.FromArgb(60, 66, 77));
         e.Graphics.DrawLine(grid, left, bottom, right, bottom); e.Graphics.DrawLine(grid, left, top, right, top);

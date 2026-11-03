@@ -14,6 +14,20 @@ internal sealed class Settings
     public int PollSeconds { get; set; } = 1;
     public int DiskSeconds { get; set; } = 10;
     public bool ShowTemperature { get; set; } = true;
+    public bool ShowLeaders { get; set; } = true;
+    public bool ShowQueue { get; set; } = true;
+    public bool ShowCpu { get; set; } = true;
+    public bool ShowGraph { get; set; } = true;
+    public bool ShowRam { get; set; } = true;
+    public bool ShowDiskC { get; set; } = true;
+    public bool ShowDiskD { get; set; } = true;
+    public bool ShowQuotas { get; set; } = true;
+    public void CopyVisibilityFrom(Settings other)
+    {
+        ShowLeaders = other.ShowLeaders; ShowQueue = other.ShowQueue; ShowCpu = other.ShowCpu;
+        ShowGraph = other.ShowGraph; ShowRam = other.ShowRam; ShowDiskC = other.ShowDiskC;
+        ShowDiskD = other.ShowDiskD; ShowTemperature = other.ShowTemperature; ShowQuotas = other.ShowQuotas;
+    }
     public double? GpuYellow { get; set; }
     public double? GpuRed { get; set; }
     public Thresholds Cpu { get; set; } = new() { Yellow = 70, Red = 90, Margin = 5, RiseSeconds = 5, RecoverSeconds = 5 };

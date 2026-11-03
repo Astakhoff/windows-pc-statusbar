@@ -41,8 +41,7 @@ internal sealed class SettingsForm : Form
                 Number("Выдержка восстановления (сек.)", rule.RecoverSeconds, 0, 60, v => rule.RecoverSeconds = v);
             }
         }
-        var temp = new CheckBox { Checked = Value.ShowTemperature, AutoSize = true };
-        Row("Показывать блок температур (если недоступны — «—»)", temp); apply.Add(() => Value.ShowTemperature = temp.Checked);
+        Row("Видимость блоков — шестерёнка справа на панели.", new Label());
         Row("GPU: NVML, NVIDIA GPU #0. CPU Package недоступен.", new Label());
         var gpuYellow = new TextBox { Text = Value.GpuYellow?.ToString() ?? "", Dock = DockStyle.Fill };
         var gpuRed = new TextBox { Text = Value.GpuRed?.ToString() ?? "", Dock = DockStyle.Fill };
@@ -75,7 +74,7 @@ internal sealed class SettingsForm : Form
             Value.GpuRed = double.TryParse(gpuRed.Text, out double gr) ? gr : null;
             foreach (var action in apply) action();
             if (!Value.Valid()) { MessageBox.Show(this, "Проверьте порядок порогов. Границы восстановления должны оставаться в 0–100% и не пересекать соседний порог."); return; }
-            try { Value.Save(); Startup.Set(startup.Checked); DialogResult = DialogResult.OK; Close(); }
+            try { Value.CopyVisibilityFrom(current); Value.Save(); Startup.Set(startup.Checked); DialogResult = DialogResult.OK; Close(); }
             catch (Exception e) { MessageBox.Show(this, "Не удалось сохранить: " + e.Message); }
         };
         AcceptButton = save; CancelButton = cancel;

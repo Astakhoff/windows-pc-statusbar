@@ -23,6 +23,8 @@ internal sealed class BarForm : Form
     readonly Label queueBlock = new() { Text = "Очередь  —", AccessibleName = "Очередь CPU" };
     readonly Label leadersBlock = new() { Text = "Лидеры CPU  —", AccessibleName = "Основные потребители CPU" };
     readonly Label moreBlock = new() { Text = "…", AccessibleName = "Все показатели", TextAlign = ContentAlignment.MiddleCenter, Cursor = Cursors.Hand, ForeColor = Color.Silver };
+    readonly Label gear = new() { Text = "⚙", AccessibleName = "Видимость блоков", TextAlign = ContentAlignment.MiddleCenter, Cursor = Cursors.Hand, ForeColor = Color.Silver };
+    readonly ContextMenuStrip visibilityMenu = new();
     readonly Temperature temperature = new();
     readonly NotifyIcon tray;
     readonly ToolTip tips = new() { AutoPopDelay = 15000 };
@@ -60,7 +62,11 @@ internal sealed class BarForm : Form
         StartPosition = FormStartPosition.Manual; AutoScaleMode = AutoScaleMode.Dpi;
         BackColor = Color.FromArgb(23, 26, 32); ForeColor = Color.White; DoubleBuffered = true;
         Font = new Font("Segoe UI", 10F);
-        Controls.Add(flow); Controls.Add(quotaTicker);
+        flow.Dock = DockStyle.None;
+        Controls.Add(flow); Controls.Add(quotaTicker); Controls.Add(gear);
+        ConfigureVisibilityMenu();
+        gear.Click += (_, _) => visibilityMenu.Show(gear, new Point(gear.Width, 0), ToolStripDropDownDirection.AboveLeft);
+        tips.SetToolTip(gear, "Показать или скрыть блоки панели");
         quotaTicker.Cursor = Cursors.Hand;
         quotaTicker.Click += (_, _) => OpenQuotaDetails();
         for (int i = 0; i < blocks.Length; i++)
@@ -81,6 +87,7 @@ internal sealed class BarForm : Form
         flow.Controls.AddRange([leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], blocks[3], blocks[4], moreBlock]);
         moreBlock.Click += (_, _) => ShowAllMetrics();
         menu.Items.Add("Настройки…", null, (_, _) => OpenSettings());
+        menu.Items.Add("Видимость блоков…", null, (_, _) => visibilityMenu.Show(Cursor.Position));
         menu.Items.Add("Потребители CPU…", null, (_, _) => OpenConsumers());
         menu.Items.Add("Все показатели…", null, (_, _) => ShowAllMetrics());
         menu.Items.Add("Лимиты Codex и Claude…", null, (_, _) => OpenQuotaDetails());
@@ -117,7 +124,8 @@ internal sealed class BarForm : Form
     {
         float scale = DeviceDpi / 96F;
         Control[] layout = [leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], blocks[3], blocks[4]];
-        int available = settings.TaskbarOverlay ? Math.Max(0, ClientSize.Width) : Screen.FromHandle(Handle).Bounds.Width;
+        int gearWidth = Math.Min(ClientSize.Width, Math.Max(28, (int)(32 * scale)));
+        int available = Math.Max(0, ClientSize.Width - gearWidth);
         int gap = Math.Max(2, (int)(3 * scale)), endPadding = (int)(8 * scale);
         SuspendLayout(); flow.SuspendLayout();
         try
@@ -136,8 +144,8 @@ internal sealed class BarForm : Form
             for (int i = 2; i <= 3; i++) blocks[i].Text = Fresh(i) && readings[i]!.AvailableBytes.HasValue ? $"{(i == 2 ? "C:" : "D:")} {Units.GiB(readings[i]!.AvailableBytes!.Value):0} GiB" : (i == 2 ? "C: —" : "D: —");
             queueBlock.Text = insights?.Queue != null && now - insights.At <= 9 ? $"Оч. {insights.Queue}" : "Оч. —";
             var compact = layout.Select(Measure).ToArray(); compact[0] = Math.Min(compact[0], (int)(160 * scale)); compact[3] = (int)(90 * scale);
-            bool[] enabled = [true, true, true, true, true, true, true, settings.ShowTemperature];
-            var plan = ResponsiveLayout.Calculate(available, natural, compact, enabled, [3, 0, 7, 1, 6, 5, 4, 2], gap, endPadding, (int)(240 * scale), (int)(24 * scale), (int)(16 * scale));
+            bool[] enabled = [settings.ShowLeaders, settings.ShowQueue, settings.ShowCpu, settings.ShowGraph, settings.ShowRam, settings.ShowDiskC, settings.ShowDiskD, settings.ShowTemperature];
+            var plan = ResponsiveLayout.Calculate(available, natural, compact, enabled, [3, 0, 7, 1, 6, 5, 4, 2], gap, endPadding, settings.ShowQuotas ? (int)(240 * scale) : 0, (int)(24 * scale), (int)(16 * scale));
             compactLayout = plan.Compact;
             hiddenBlocks = layout.Where((c, i) => enabled[i] && !plan.Visible[i]).Select(c => c.AccessibleName ?? "").ToArray();
             int height = Math.Max(1, Math.Min((int)(settings.Height * scale) - 6, ClientSize.Height - 6));
@@ -151,11 +159,42 @@ internal sealed class BarForm : Form
             }
             moreBlock.Visible = plan.OverflowWidth > 0; moreBlock.Margin = new Padding(gap, 3, gap, 3); moreBlock.Size = new Size(Math.Max(1, plan.OverflowWidth), height);
             tips.SetToolTip(moreBlock, "Все показатели. Не поместились: " + string.Join(", ", hiddenBlocks));
-            flow.Width = plan.ContentWidth;
+            gear.Bounds = new Rectangle(ClientSize.Width - gearWidth, 0, gearWidth, ClientSize.Height);
+            flow.Bounds = new Rectangle(available - plan.ContentWidth, 0, plan.ContentWidth, ClientSize.Height);
             int left = (int)(8 * scale);
-            quotaTicker.Bounds = new Rectangle(left, 0, Math.Max(0, ClientSize.Width - flow.Width - left * 2), ClientSize.Height);
+            quotaTicker.Visible = settings.ShowQuotas;
+            quotaTicker.Bounds = new Rectangle(left, 0, Math.Max(0, available - flow.Width - left * 2), ClientSize.Height);
         }
         finally { flow.ResumeLayout(true); ResumeLayout(true); }
+    }
+    (string Name, Func<bool> Get, Action<bool> Set)[] VisibilityItems() =>
+    [
+        ("Лидеры", () => settings.ShowLeaders, v => settings.ShowLeaders = v),
+        ("Очередь CPU", () => settings.ShowQueue, v => settings.ShowQueue = v),
+        ("CPU", () => settings.ShowCpu, v => settings.ShowCpu = v),
+        ("График CPU", () => settings.ShowGraph, v => settings.ShowGraph = v),
+        ("RAM", () => settings.ShowRam, v => settings.ShowRam = v),
+        ("C: свободно", () => settings.ShowDiskC, v => settings.ShowDiskC = v),
+        ("D: свободно", () => settings.ShowDiskD, v => settings.ShowDiskD = v),
+        ("GPU", () => settings.ShowTemperature, v => settings.ShowTemperature = v),
+        ("Лента Codex / Claude", () => settings.ShowQuotas, v => settings.ShowQuotas = v)
+    ];
+    void ConfigureVisibilityMenu()
+    {
+        foreach (var entry in VisibilityItems())
+        {
+            var item = new ToolStripMenuItem(entry.Name) { CheckOnClick = true, Checked = entry.Get() };
+            visibilityMenu.Items.Add(item);
+            visibilityMenu.Opening += (_, _) => item.Checked = entry.Get();
+            item.Click += (_, _) =>
+            {
+                bool previous = entry.Get(); entry.Set(item.Checked);
+                try { settings.Save(); LayoutBlocks(); }
+                catch (Exception e) { entry.Set(previous); item.Checked = previous; MessageBox.Show(this, "Не удалось сохранить: " + e.Message); }
+            };
+        }
+        visibilityMenu.Items.Add(new ToolStripSeparator());
+        visibilityMenu.Items.Add("Настройки…", null, (_, _) => OpenSettings());
     }
     void Register()
     {
@@ -388,7 +427,7 @@ internal sealed class BarForm : Form
             Metrics = readings.Select(r => new { r?.Text, r?.Percent, r?.Detail, AgeSeconds = r == null ? (double?)null : clock.Elapsed.TotalSeconds - r.At }),
             Gpu = gpu, Startup = Startup.Enabled, States = evaluators.Select(e => e.State.ToString()), MaximizedBounds = maximizedBounds,
             CpuInsights = insights, CpuHistory = cpuHistory.Window(clock.Elapsed.TotalSeconds),
-            ContentWidth = flow.Width, Blocks = flow.Controls.Cast<Control>().Where(c => c.Visible).Select(c => new { c.AccessibleName, c.Text, c.Bounds }),
+            ContentWidth = flow.Width, GearBounds = gear.Bounds, EnabledBlocks = VisibilityItems().Where(i => i.Get()).Select(i => i.Name), Blocks = flow.Controls.Cast<Control>().Where(c => c.Visible).Select(c => new { c.AccessibleName, c.Text, c.Bounds }),
             Quotas = quotaSnapshots, TickerBounds = quotaTicker.Bounds, TickerText = QuotaText.Ticker(quotaSnapshots, DateTimeOffset.UtcNow), TickerTags = QuotaText.Tags(quotaSnapshots, DateTimeOffset.UtcNow),
             Windows = Application.OpenForms.Cast<Form>().Select(f => new { f.Text, f.Visible, f.Bounds })
         };
@@ -464,7 +503,7 @@ internal sealed class BarForm : Form
     }
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { timer.Dispose(); tray.Dispose(); tips.Dispose(); menu.Dispose(); temperature.Dispose(); insightsProvider.Dispose(); Font.Dispose(); }
+        if (disposing) { timer.Dispose(); tray.Dispose(); tips.Dispose(); menu.Dispose(); visibilityMenu.Dispose(); temperature.Dispose(); insightsProvider.Dispose(); Font.Dispose(); }
         base.Dispose(disposing);
     }
 }

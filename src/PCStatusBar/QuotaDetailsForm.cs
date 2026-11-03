@@ -20,10 +20,10 @@ internal sealed class QuotaDetailsForm : Form
         var lines = new List<string> { "Остатки лимитов аккаунтов. Автообновление раз в минуту.", "Проценты показывают остаток лимита; количество токенов не вычисляется.", "" };
         foreach (var snapshot in snapshots)
         {
-            lines.Add(snapshot.Provider + ":");
-            foreach (var window in snapshot.Windows)
+            lines.Add(QuotaText.ProviderName(snapshot.Provider) + ":");
+            foreach (var window in QuotaText.VisibleWindows(snapshot))
             {
-                string prefix = snapshot.Provider + ": ";
+                string prefix = QuotaText.ProviderName(snapshot.Provider) + ": ";
                 string windowText = QuotaText.Window(snapshot, window, now);
                 lines.Add(windowText.StartsWith(prefix, StringComparison.Ordinal) ? windowText[prefix.Length..] : windowText);
                 if (window.ResetsAt.HasValue) lines.Add("  Дата сброса: " + window.ResetsAt.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm zzz"));

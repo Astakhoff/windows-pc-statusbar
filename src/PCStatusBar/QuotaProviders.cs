@@ -12,7 +12,7 @@ internal interface IQuotaProvider
 
 internal sealed class CodexQuotaProvider : IQuotaProvider
 {
-    public string Name => "Кодекс";
+    public string Name => "Codex";
     static string? FindExecutable()
     {
         string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenAI", "Codex", "bin");
@@ -75,7 +75,7 @@ internal sealed class CodexQuotaProvider : IQuotaProvider
 
 internal sealed class ClaudeQuotaProvider : IQuotaProvider
 {
-    public string Name => "Клод";
+    public string Name => "Claude";
     Task<string[]>? pendingRead;
     string[] previousBadges = [];
     QuotaSnapshot? previous;

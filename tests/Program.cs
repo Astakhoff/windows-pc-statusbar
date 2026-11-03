@@ -75,5 +75,16 @@ Check(QuotaText.Countdown(quotaNow.AddDays(2).AddHours(4), quotaNow) == "2 д 4 
 Check(QuotaText.Window(quota, quota.Windows[0], quotaNow.AddMinutes(4)).Contains("устарели"), "stale quotas are labelled explicitly");
 var expiredQuota = quota with { Windows = [new("week", 90, quotaNow.AddSeconds(-1))] };
 Check(QuotaText.Window(expiredQuota, expiredQuota.Windows[0], quotaNow).Contains("ожидаем") && !QuotaText.Window(expiredQuota, expiredQuota.Windows[0], quotaNow).Contains("10%"), "reset does not fabricate a new allowance");
-Check(QuotaText.Ticker([quota, claudeQuota], quotaNow).IndexOf("Кодекс: неделя", StringComparison.Ordinal) < QuotaText.Ticker([quota, claudeQuota], quotaNow).IndexOf("Кодекс: 5 ч", StringComparison.Ordinal), "ticker keeps weekly then five-hour ordering");
+var tags = QuotaText.Tags([quota, claudeQuota], quotaNow);
+Check(tags.Length == 3 && tags[0].Provider == "Codex" && tags[0].Period == "week" && tags[1].Provider == "Claude" && tags[2].Period == "5 часов", "tag order and English provider labels with Codex short window omitted");
+Check(tags[2].Value == "None" && tags[0].Value == "75%", "unknown tags use None while real values use remaining percentages");
+Check(QuotaText.Tags([swapped], quotaNow).Length == 1, "Codex five-hour item stays hidden even when data exists");
+Check(QuotaText.Tags([quota], quotaNow.AddMinutes(4))[0] is { Value: "None", Reset: null }, "stale tags do not retain an apparent current percentage");
+var overlayRect = OverlayGeometry.Calculate(new(0, 1392, 3440, 48), 560, 240, 38, 1);
+Check(overlayRect == new System.Drawing.Rectangle(560, 1397, 2640, 38), "fixed overlay stays between chosen left and right taskbar margins");
+var negativeOverlay = OverlayGeometry.Calculate(new(-1920, 1032, 1920, 48), 100, 200, 38, 1);
+Check(negativeOverlay.Left == -1820 && negativeOverlay.Right == -200, "overlay supports negative monitor coordinates");
+var constrainedOverlay = OverlayGeometry.Calculate(new(0, 0, 800, 48), 10000, 10000, 60, 1);
+Check(constrainedOverlay.Left >= 0 && constrainedOverlay.Right <= 800 && constrainedOverlay.Width >= 200 && constrainedOverlay.Height <= 48, "extreme margins and height remain inside taskbar");
+Check(OverlayGeometry.Calculate(new(0, 0, 3000, 72), 100, 200, 38, 1.5).Height == 57, "overlay dimensions scale with DPI");
 Console.WriteLine($"{count} checks passed");

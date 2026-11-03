@@ -20,6 +20,10 @@ internal sealed class SettingsForm : Form
         monitor.SelectedIndex = Math.Max(0, monitor.Items.IndexOf(Value.Monitor));
         Row("Монитор", monitor); apply.Add(() => Value.Monitor = monitor.SelectedIndex == 0 ? "" : monitor.Text);
         Number("Высота панели (логические px)", Value.Height, 32, 60, v => Value.Height = (int)v);
+        var overlay = new CheckBox { Checked = Value.TaskbarOverlay, AutoSize = true };
+        Row("Фиксированное наложение внутри taskbar", overlay); apply.Add(() => Value.TaskbarOverlay = overlay.Checked);
+        Number("Отступ слева от края taskbar (логические px)", Value.OverlayLeft, 0, 20000, v => Value.OverlayLeft = (int)v);
+        Number("Отступ справа от края taskbar (логические px)", Value.OverlayRight, 0, 20000, v => Value.OverlayRight = (int)v);
         Number("CPU / RAM: интервал (сек.)", Value.PollSeconds, 1, 10, v => Value.PollSeconds = (int)v);
         Number("C: / D: интервал (сек.)", Value.DiskSeconds, 2, 120, v => Value.DiskSeconds = (int)v);
         foreach (var (label, rule) in new[] { ("CPU", Value.Cpu), ("RAM", Value.Ram), ("C: и D: свободно", Value.Disk) })

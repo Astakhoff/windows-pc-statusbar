@@ -6,6 +6,9 @@ internal sealed class Settings
 {
     public string Monitor { get; set; } = "";
     public int Height { get; set; } = 38;
+    public bool TaskbarOverlay { get; set; }
+    public int OverlayLeft { get; set; } = 560;
+    public int OverlayRight { get; set; } = 240;
     public int PollSeconds { get; set; } = 1;
     public int DiskSeconds { get; set; } = 10;
     public bool ShowTemperature { get; set; } = true;
@@ -16,7 +19,7 @@ internal sealed class Settings
     public Thresholds Disk { get; set; } = new() { Yellow = 15, Red = 5, Margin = 2, Inverse = true };
     public static string Folder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PCStatusBar");
     public static string FilePath => Path.Combine(Folder, "settings.json");
-    public bool Valid() => Monitor != null && Height is >= 32 and <= 60 && PollSeconds is >= 1 and <= 10 && DiskSeconds is >= 2 and <= 120 &&
+    public bool Valid() => Monitor != null && Height is >= 32 and <= 60 && OverlayLeft is >= 0 and <= 20000 && OverlayRight is >= 0 and <= 20000 && PollSeconds is >= 1 and <= 10 && DiskSeconds is >= 2 and <= 120 &&
         Cpu is not null && Ram is not null && Disk is not null && Cpu.Valid() && Ram.Valid() && Disk.Valid() && !Cpu.Inverse && !Ram.Inverse && Disk.Inverse &&
         ((!GpuYellow.HasValue && !GpuRed.HasValue) || (GpuYellow > 0 && GpuRed > GpuYellow && GpuRed < 125));
     public static Settings Load()

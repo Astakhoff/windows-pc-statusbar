@@ -13,7 +13,7 @@ internal static class Program
         if (!first)
         {
             var hwnd = Native.FindWindow(null, WindowTitle);
-            int command = args.Contains("--exit") ? 1 : args.Contains("--hide") ? 2 : args.Contains("--show") ? 3 : args.Contains("--diagnostics") ? 4 : args.Contains("--inspect") ? 5 : args.Contains("--end-inspect") ? 6 : args.Contains("--check-maximized") ? 7 : 0;
+            int command = args.Contains("--exit") ? 1 : args.Contains("--hide") ? 2 : args.Contains("--show") ? 3 : args.Contains("--diagnostics") ? 4 : args.Contains("--inspect") ? 5 : args.Contains("--end-inspect") ? 6 : args.Contains("--check-maximized") ? 7 : args.Contains("--taskbar-overlay") ? 8 : args.Contains("--appbar") ? 9 : args.Contains("--taskbar-regions") ? 10 : 0;
             if (hwnd != 0) Native.PostMessage(hwnd, ControlMessage, command, 0);
             return;
         }

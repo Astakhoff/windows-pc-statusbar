@@ -17,12 +17,11 @@ internal sealed class BarForm : Form
     readonly IQuotaProvider[] quotaProviders = [new CodexQuotaProvider(), new ClaudeQuotaProvider()];
     readonly CancellationTokenSource quotaCancellation = new();
     Task<QuotaSnapshot[]>? quotaRequest;
-    QuotaSnapshot[] quotaSnapshots = [QuotaSnapshot.Missing("Кодекс", "Codex app-server", "Ожидание первого чтения", DateTimeOffset.UtcNow), QuotaSnapshot.Missing("Клод", "Claude desktop", "Ожидание первого чтения", DateTimeOffset.UtcNow)];
+    QuotaSnapshot[] quotaSnapshots = [QuotaSnapshot.Missing("Codex", "Codex app-server", "Ожидание первого чтения", DateTimeOffset.UtcNow), QuotaSnapshot.Missing("Claude", "Claude desktop", "Ожидание первого чтения", DateTimeOffset.UtcNow)];
     double lastQuotaAttempt = -1000;
     QuotaDetailsForm? quotaDetails;
     readonly Label queueBlock = new() { Text = "Очередь  —", AccessibleName = "Очередь CPU" };
     readonly Label leadersBlock = new() { Text = "Лидеры CPU  —", AccessibleName = "Основные потребители CPU" };
-    readonly Label diskSeparator = new() { Text = "—", TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.DimGray, AccessibleName = "Разделитель дисков" };
     readonly Temperature temperature = new();
     readonly NotifyIcon tray;
     readonly ToolTip tips = new() { AutoPopDelay = 15000 };
@@ -42,6 +41,7 @@ internal sealed class BarForm : Form
     SettingsForm? dialog;
     nint? inspectionStyle;
     Rectangle? maximizedBounds;
+    bool overlayBehindFullscreen;
     protected override bool ShowWithoutActivation => true;
     protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x08000080; return p; } }
 
@@ -69,7 +69,7 @@ internal sealed class BarForm : Form
         leadersBlock.Cursor = Cursors.Hand;
         leadersBlock.Click += (_, _) => OpenConsumers();
         flow.Controls.Clear();
-        flow.Controls.AddRange([leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], diskSeparator, blocks[3], blocks[4]]);
+        flow.Controls.AddRange([leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], blocks[3], blocks[4]]);
         menu.Items.Add("Настройки…", null, (_, _) => OpenSettings());
         menu.Items.Add("Потребители CPU…", null, (_, _) => OpenConsumers());
         menu.Items.Add("Лимиты Codex и Claude…", null, (_, _) => OpenQuotaDetails());
@@ -83,7 +83,7 @@ internal sealed class BarForm : Form
         menu.Items.Add("Выход", null, (_, _) => Close());
         ContextMenuStrip = menu; flow.ContextMenuStrip = menu;
         foreach (var block in blocks) block.ContextMenuStrip = menu;
-        queueBlock.ContextMenuStrip = leadersBlock.ContextMenuStrip = cpuGraph.ContextMenuStrip = diskSeparator.ContextMenuStrip = menu;
+        queueBlock.ContextMenuStrip = leadersBlock.ContextMenuStrip = cpuGraph.ContextMenuStrip = menu;
         quotaTicker.ContextMenuStrip = menu;
         tray = new NotifyIcon { Icon = SystemIcons.Information, Text = "PCStatusBar — CPU / RAM / C:", ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += (_, _) => OpenSettings();
@@ -104,8 +104,8 @@ internal sealed class BarForm : Form
     void LayoutBlocks()
     {
         float scale = DeviceDpi / 96F;
-        Control[] layout = [leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], diskSeparator, blocks[3], blocks[4]];
-        int available = Screen.FromHandle(Handle).Bounds.Width;
+        Control[] layout = [leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], blocks[3], blocks[4]];
+        int available = settings.TaskbarOverlay ? Math.Max(1, ClientSize.Width) : Screen.FromHandle(Handle).Bounds.Width;
         int gap = Math.Max(2, (int)(3 * scale)), endPadding = (int)(8 * scale);
         var visible = layout.Where(c => c != blocks[4] || settings.ShowTemperature).ToArray();
         var widths = visible.Select(control => control is Label label
@@ -141,6 +141,7 @@ internal sealed class BarForm : Form
     }
     void Register()
     {
+        if (settings.TaskbarOverlay && Visible) { Unregister(); PositionBar(); return; }
         if (registered || !Visible) return;
         var data = Native.AppBarData.For(Handle); data.Callback = Callback;
         registered = Native.SHAppBarMessage(0, ref data) != 0;
@@ -161,13 +162,23 @@ internal sealed class BarForm : Form
     }
     void PositionBar()
     {
-        if (!registered || positioning || !Visible) return;
+        if ((!registered && !settings.TaskbarOverlay) || positioning || !Visible) return;
         positioning = true;
         try
         {
             var screen = Screen.AllScreens.FirstOrDefault(s => s.DeviceName == settings.Monitor) ?? Screen.PrimaryScreen!;
             int h = (int)Math.Round(settings.Height * DeviceDpi / 96.0);
             var b = screen.Bounds;
+            if (settings.TaskbarOverlay)
+            {
+                var taskbar = Native.AppBarData.For(0);
+                if (Native.SHAppBarMessage(5, ref taskbar) == 0) return;
+                var t = taskbar.Rect.Rectangle;
+                if (t.Width <= t.Height) { Log.Write("Фиксированное наложение требует горизонтального taskbar"); return; }
+                var rect = OverlayGeometry.Calculate(t, settings.OverlayLeft, settings.OverlayRight, settings.Height, DeviceDpi / 96.0);
+                Native.SetWindowPos(Handle, -1, rect.X, rect.Y, rect.Width, rect.Height, 0x10);
+                overlayBehindFullscreen = false; LayoutBlocks(); return;
+            }
             var data = Native.AppBarData.For(Handle); data.Edge = 3;
             data.Rect = new Native.Rect { Left = b.Left, Top = b.Top, Right = b.Right, Bottom = b.Bottom };
             Native.SHAppBarMessage(2, ref data);
@@ -186,6 +197,13 @@ internal sealed class BarForm : Form
         try
         {
             RefreshQuotas();
+            if (settings.TaskbarOverlay && Visible)
+            {
+                var screen = Screen.FromHandle(Handle);
+                bool fullscreen = TaskbarOverlay.FullscreenForeground(Handle, screen.Bounds);
+                if (!fullscreen || !overlayBehindFullscreen) Native.SetWindowPos(Handle, fullscreen ? 1 : -1, 0, 0, 0, 0, 0x13);
+                overlayBehindFullscreen = fullscreen;
+            }
             double now = clock.Elapsed.TotalSeconds;
             bool poll = now - lastPoll >= settings.PollSeconds, disk = now - lastDisk >= settings.DiskSeconds;
             if (poll || disk)
@@ -244,7 +262,7 @@ internal sealed class BarForm : Form
             tips.SetToolTip(cpuGraph, cpuGraph.AccessibleDescription + ".\nСлева −60 секунд, справа сейчас; вертикальная шкала 0–100%. История только в памяти. Разрывы означают отсутствие отсчётов.");
             LayoutBlocks();
             var quotaNow = DateTimeOffset.UtcNow;
-            quotaTicker.SetMessage(QuotaText.Ticker(quotaSnapshots, quotaNow));
+            quotaTicker.SetQuotas(quotaSnapshots, quotaNow);
             tips.SetToolTip(quotaTicker, QuotaText.Ticker(quotaSnapshots, quotaNow) + "\nНажмите для источников, дат сброса и причин отсутствия данных. Наведение останавливает прокрутку.");
             quotaDetails?.UpdateSnapshots(quotaSnapshots, quotaNow);
         }
@@ -262,7 +280,7 @@ internal sealed class BarForm : Form
         dialog.FormClosed += (_, _) =>
         {
             var completed = dialog!; dialog = null;
-            if (!closing && completed.DialogResult == DialogResult.OK) { settings = completed.Value; ResetRules(); LayoutBlocks(); PositionBar(); }
+            if (!closing && completed.DialogResult == DialogResult.OK) { Unregister(); settings = completed.Value; ResetRules(); Register(); LayoutBlocks(); }
             completed.Dispose();
         };
         dialog.Show(); dialog.Activate();
@@ -306,18 +324,27 @@ internal sealed class BarForm : Form
         var taskbar = Native.AppBarData.For(0); Native.SHAppBarMessage(5, ref taskbar);
         var state = Native.AppBarData.For(0);
         var snapshot = new {
-            Visible, registered, Bounds, DeviceDpi,
+            Visible, registered, Bounds, DeviceDpi, settings.TaskbarOverlay, settings.OverlayLeft, settings.OverlayRight,
             Monitors = Screen.AllScreens.Select(s => new { s.DeviceName, s.Primary, s.Bounds, s.WorkingArea }),
             Taskbar = taskbar.Rect.Rectangle, TaskbarEdge = taskbar.Edge, TaskbarState = (ulong)Native.SHAppBarMessage(4, ref state),
             Metrics = readings.Select(r => new { r?.Text, r?.Percent, r?.Detail, AgeSeconds = r == null ? (double?)null : clock.Elapsed.TotalSeconds - r.At }),
             Gpu = gpu, Startup = Startup.Enabled, States = evaluators.Select(e => e.State.ToString()), MaximizedBounds = maximizedBounds,
             CpuInsights = insights, CpuHistory = cpuHistory.Window(clock.Elapsed.TotalSeconds),
             ContentWidth = flow.Width, Blocks = flow.Controls.Cast<Control>().Where(c => c.Visible).Select(c => new { c.AccessibleName, c.Text, c.Bounds }),
-            Quotas = quotaSnapshots, TickerBounds = quotaTicker.Bounds, TickerText = QuotaText.Ticker(quotaSnapshots, DateTimeOffset.UtcNow),
+            Quotas = quotaSnapshots, TickerBounds = quotaTicker.Bounds, TickerText = QuotaText.Ticker(quotaSnapshots, DateTimeOffset.UtcNow), TickerTags = QuotaText.Tags(quotaSnapshots, DateTimeOffset.UtcNow),
             Windows = Application.OpenForms.Cast<Form>().Select(f => new { f.Text, f.Visible, f.Bounds })
         };
         Directory.CreateDirectory(Settings.Folder);
         File.WriteAllText(Path.Combine(Settings.Folder, "diagnostics.local.json"), System.Text.Json.JsonSerializer.Serialize(snapshot, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+    }
+    void SetOverlay(bool enabled)
+    {
+        Unregister(); settings.TaskbarOverlay = enabled; settings.Save(); Register();
+    }
+    void WriteTaskbarRegions()
+    {
+        Directory.CreateDirectory(Settings.Folder);
+        File.WriteAllText(Path.Combine(Settings.Folder, "taskbar.local.json"), System.Text.Json.JsonSerializer.Serialize(TaskbarOverlay.ReadShellRegions()));
     }
     void Inspect(bool enabled)
     {
@@ -358,7 +385,7 @@ internal sealed class BarForm : Form
         else if (m.Msg == Program.ControlMessage)
         {
             int cmd = (int)m.WParam;
-            BeginInvoke(() => { if (cmd == 1) Close(); else if (cmd == 2) SetVisible(false); else if (cmd == 3) SetVisible(true); else if (cmd == 4) WriteDiagnostics(); else if (cmd == 5) Inspect(true); else if (cmd == 6) Inspect(false); else if (cmd == 7) CheckMaximized(); else OpenSettings(); });
+            BeginInvoke(() => { if (cmd == 1) Close(); else if (cmd == 2) SetVisible(false); else if (cmd == 3) SetVisible(true); else if (cmd == 4) WriteDiagnostics(); else if (cmd == 5) Inspect(true); else if (cmd == 6) Inspect(false); else if (cmd == 7) CheckMaximized(); else if (cmd == 8) SetOverlay(true); else if (cmd == 9) SetOverlay(false); else if (cmd == 10) WriteTaskbarRegions(); else OpenSettings(); });
         }
         else if (m.Msg is 0x02E0 or 0x007E) QueuePosition();
         base.WndProc(ref m);

@@ -32,7 +32,7 @@ if ((Test-Path -LiteralPath $destination) -and !(Get-ChildItem -LiteralPath $des
 if ($RemoveSettings) {
     $settings = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'PCStatusBar'))
     if ($settings -eq [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'PCStatusBar'))) {
-        foreach ($name in @('settings.json','settings.json.tmp','events.log','events.log.old','diagnostics.local.json')) {
+        foreach ($name in @('settings.json','settings.json.tmp','events.log','events.log.old','diagnostics.local.json','taskbar.local.json')) {
             $file = Join-Path $settings $name
             if (Test-Path -LiteralPath $file -PathType Leaf) { Remove-Item -LiteralPath $file }
         }

@@ -36,7 +36,7 @@ public static class QuotaParsing
                 string? kind = minutes == 10080 ? "week" : minutes == 300 ? "fiveHour" : null;
                 if (kind != null) windows[kind] = new(kind, Number(window, "usedPercent"), Reset(window, "resetsAt"));
             }
-        return new("Кодекс", "Codex app-server: account/rateLimits/read", now,
+        return new("Codex", "Codex app-server: account/rateLimits/read", now,
             new[] { "week", "fiveHour" }.Select(k => windows.GetValueOrDefault(k) ?? new(k, null, null, "Сервис не передал это окно лимита")).ToArray());
     }
     public static QuotaSnapshot ClaudeBadge(IEnumerable<string> badges, DateTimeOffset now, TimeZoneInfo zone)
@@ -49,7 +49,7 @@ public static class QuotaParsing
                 if (!double.TryParse(match.Groups["used"].Value.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out double used) || used is < 0 or > 100) continue;
                 windows[kind] = new(kind, used, ClaudeReset(match.Groups["reset"].Value, now, zone));
             }
-        return new("Клод", "Индикатор Usage в приложении Claude (чтение доступности Windows, без действий)", now,
+        return new("Claude", "Индикатор Usage в приложении Claude (чтение доступности Windows, без действий)", now,
             new[] { "week", "fiveHour" }.Select(k => windows.GetValueOrDefault(k) ?? new(k, null, null, "Приложение Claude не показывает это окно в индикаторе Usage")).ToArray());
     }
     public static DateTimeOffset? ClaudeReset(string text, DateTimeOffset now, TimeZoneInfo zone)
@@ -72,8 +72,12 @@ public static class QuotaParsing
     }
 }
 
+public record QuotaTagGroup(string Provider, string Period, string Value, string? Reset, string State);
+
 public static class QuotaText
 {
+    public static string ProviderName(string name) => name switch { "Кодекс" => "Codex", "Клод" => "Claude", _ => name };
+    public static IEnumerable<QuotaWindow> VisibleWindows(QuotaSnapshot snapshot) => snapshot.Windows.Where(w => !(ProviderName(snapshot.Provider) == "Codex" && w.Kind == "fiveHour"));
     public static string Countdown(DateTimeOffset reset, DateTimeOffset now)
     {
         if (reset <= now) return "ожидаем обновления после сброса";
@@ -83,13 +87,21 @@ public static class QuotaText
     }
     public static string Window(QuotaSnapshot snapshot, QuotaWindow window, DateTimeOffset now)
     {
-        string label = $"{snapshot.Provider}: {(window.Kind == "week" ? "неделя" : "5 ч")}";
+        string label = $"{ProviderName(snapshot.Provider)}: {(window.Kind == "week" ? "week" : "5 часов")}";
         if (now - snapshot.ObservedAt > TimeSpan.FromMinutes(3)) return label + " — данные устарели";
         if (window.ResetsAt <= now) return label + " — ожидаем обновления после сброса";
-        if (!window.UsedPercent.HasValue) return label + " — нет данных";
+        if (!window.UsedPercent.HasValue) return label + " — None";
         string remaining = (100 - window.UsedPercent.Value).ToString("0.#", CultureInfo.CurrentCulture);
         return $"{label} — осталось {remaining}% · " + (window.ResetsAt.HasValue ? "до сброса " + Countdown(window.ResetsAt.Value, now) : "время сброса недоступно");
     }
-    public static string Ticker(IEnumerable<QuotaSnapshot> snapshots, DateTimeOffset now) =>
-        string.Join("     ◆     ", snapshots.SelectMany(s => s.Windows.Select(w => Window(s, w, now))));
+    public static QuotaTagGroup[] Tags(IEnumerable<QuotaSnapshot> snapshots, DateTimeOffset now) => snapshots.SelectMany(snapshot => VisibleWindows(snapshot).Select(window =>
+    {
+        bool available = window.UsedPercent.HasValue && now - snapshot.ObservedAt <= TimeSpan.FromMinutes(3) && !(window.ResetsAt.HasValue && window.ResetsAt <= now);
+        double remaining = 100 - (window.UsedPercent ?? 0);
+        string value = available ? remaining.ToString("0.#", CultureInfo.CurrentCulture) + "%" : "None";
+        string? reset = available ? (window.ResetsAt.HasValue ? Countdown(window.ResetsAt.Value, now) : "None") : null;
+        string state = !available ? "unknown" : remaining <= 10 ? "low" : remaining <= 25 ? "attention" : "available";
+        return new QuotaTagGroup(ProviderName(snapshot.Provider), window.Kind == "week" ? "week" : "5 часов", value, reset, state);
+    })).ToArray();
+    public static string Ticker(IEnumerable<QuotaSnapshot> snapshots, DateTimeOffset now) => string.Join("   ·   ", Tags(snapshots, now).Select(g => $"[{g.Provider}] [{g.Period}] [{g.Value}]" + (g.Reset == null ? "" : $" [{g.Reset}]")));
 }

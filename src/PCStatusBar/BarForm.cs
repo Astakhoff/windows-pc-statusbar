@@ -145,7 +145,7 @@ internal sealed class BarForm : Form
             queueBlock.Text = insights?.Queue != null && now - insights.At <= 9 ? $"Оч. {insights.Queue}" : "Оч. —";
             var compact = layout.Select(Measure).ToArray(); compact[0] = Math.Min(compact[0], (int)(160 * scale)); compact[3] = (int)(90 * scale);
             bool[] enabled = [settings.ShowLeaders, settings.ShowQueue, settings.ShowCpu, settings.ShowGraph, settings.ShowRam, settings.ShowDiskC, settings.ShowDiskD, settings.ShowTemperature];
-            var plan = ResponsiveLayout.Calculate(available, natural, compact, enabled, [3, 0, 7, 1, 6, 5, 4, 2], gap, endPadding, settings.ShowQuotas ? (int)(240 * scale) : 0, (int)(24 * scale), (int)(16 * scale));
+            var plan = ResponsiveLayout.Calculate(available, natural, compact, enabled, [3, 0, 7, 1, 6, 5, 4, 2], gap, endPadding, settings.ShowQuotas && settings.QuotaVisibility.AnyEnabled() ? (int)(240 * scale) : 0, (int)(24 * scale), (int)(16 * scale));
             compactLayout = plan.Compact;
             hiddenBlocks = layout.Where((c, i) => enabled[i] && !plan.Visible[i]).Select(c => c.AccessibleName ?? "").ToArray();
             int height = Math.Max(1, Math.Min((int)(settings.Height * scale) - 6, ClientSize.Height - 6));
@@ -162,7 +162,7 @@ internal sealed class BarForm : Form
             gear.Bounds = new Rectangle(ClientSize.Width - gearWidth, 0, gearWidth, ClientSize.Height);
             flow.Bounds = new Rectangle(available - plan.ContentWidth, 0, plan.ContentWidth, ClientSize.Height);
             int left = (int)(8 * scale);
-            quotaTicker.Visible = settings.ShowQuotas;
+            quotaTicker.Visible = settings.ShowQuotas && settings.QuotaVisibility.AnyEnabled();
             quotaTicker.Bounds = new Rectangle(left, 0, Math.Max(0, available - flow.Width - left * 2), ClientSize.Height);
         }
         finally { flow.ResumeLayout(true); ResumeLayout(true); }
@@ -177,19 +177,24 @@ internal sealed class BarForm : Form
         ("C: свободно", () => settings.ShowDiskC, v => settings.ShowDiskC = v),
         ("D: свободно", () => settings.ShowDiskD, v => settings.ShowDiskD = v),
         ("GPU", () => settings.ShowTemperature, v => settings.ShowTemperature = v),
-        ("Лента Codex / Claude", () => settings.ShowQuotas, v => settings.ShowQuotas = v)
+        ("Лента Codex / Claude", () => settings.ShowQuotas, v => settings.ShowQuotas = v),
+        ("Claude — пятичасовой лимит", () => settings.QuotaVisibility.ClaudeFiveHour, v => settings.QuotaVisibility = settings.QuotaVisibility with { ClaudeFiveHour = v }),
+        ("Claude — недельный лимит", () => settings.QuotaVisibility.ClaudeWeek, v => settings.QuotaVisibility = settings.QuotaVisibility with { ClaudeWeek = v }),
+        ("Codex — пятичасовой лимит", () => settings.QuotaVisibility.CodexFiveHour, v => settings.QuotaVisibility = settings.QuotaVisibility with { CodexFiveHour = v }),
+        ("Codex — недельный лимит", () => settings.QuotaVisibility.CodexWeek, v => settings.QuotaVisibility = settings.QuotaVisibility with { CodexWeek = v })
     ];
     void ConfigureVisibilityMenu()
     {
         foreach (var entry in VisibilityItems())
         {
+            if (entry.Name == "Claude — пятичасовой лимит") visibilityMenu.Items.Add(new ToolStripSeparator());
             var item = new ToolStripMenuItem(entry.Name) { CheckOnClick = true, Checked = entry.Get() };
             visibilityMenu.Items.Add(item);
             visibilityMenu.Opening += (_, _) => item.Checked = entry.Get();
             item.Click += (_, _) =>
             {
                 bool previous = entry.Get(); entry.Set(item.Checked);
-                try { settings.Save(); LayoutBlocks(); }
+                try { settings.Save(); LayoutBlocks(); UpdateQuotaDisplay(); }
                 catch (Exception e) { entry.Set(previous); item.Checked = previous; MessageBox.Show(this, "Не удалось сохранить: " + e.Message); }
             };
         }
@@ -336,10 +341,7 @@ internal sealed class BarForm : Form
             cpuGraph.UpdateHistory(cpuHistory.Window(now), now, Math.Max(5, 3 * settings.PollSeconds));
             tips.SetToolTip(cpuGraph, cpuGraph.AccessibleDescription + ".\nСлева −60 секунд, справа сейчас; вертикальная шкала 0–100%. История только в памяти. Разрывы означают отсутствие отсчётов.");
             LayoutBlocks();
-            var quotaNow = DateTimeOffset.UtcNow;
-            quotaTicker.SetQuotas(quotaSnapshots, quotaNow);
-            tips.SetToolTip(quotaTicker, QuotaText.Ticker(quotaSnapshots, quotaNow) + "\nНажмите для источников, дат сброса и причин отсутствия данных. Наведение останавливает прокрутку.");
-            quotaDetails?.UpdateSnapshots(quotaSnapshots, quotaNow);
+            UpdateQuotaDisplay();
         }
         catch (Exception e) { Log.Write(e.ToString()); }
         finally { busy = false; if (resetPending && !closing) ResetRules(); if (closing && !IsDisposed && IsHandleCreated) BeginInvoke(Close); }
@@ -347,6 +349,13 @@ internal sealed class BarForm : Form
     static Reading Safe(Func<Reading> read, string name, double now)
     {
         try { return read(); } catch (Exception e) { Log.Write(name + ": " + e.Message); return new(null, name + "  —", e.Message, now); }
+    }
+    void UpdateQuotaDisplay()
+    {
+        var now = DateTimeOffset.UtcNow;
+        quotaTicker.SetQuotas(quotaSnapshots, now, settings.QuotaVisibility);
+        tips.SetToolTip(quotaTicker, QuotaText.Ticker(quotaSnapshots, now, settings.QuotaVisibility) + "\nНажмите для источников, дат сброса и причин отсутствия данных. Наведение останавливает прокрутку.");
+        quotaDetails?.UpdateSnapshots(quotaSnapshots, now, settings.QuotaVisibility);
     }
     void OpenSettings()
     {
@@ -408,7 +417,7 @@ internal sealed class BarForm : Form
         quotaDetails = new QuotaDetailsForm();
         quotaDetails.RefreshRequested += (_, _) => { lastQuotaAttempt = -1000; RefreshQuotas(); };
         quotaDetails.FormClosed += (_, _) => quotaDetails = null;
-        quotaDetails.UpdateSnapshots(quotaSnapshots, DateTimeOffset.UtcNow);
+        quotaDetails.UpdateSnapshots(quotaSnapshots, DateTimeOffset.UtcNow, settings.QuotaVisibility);
         quotaDetails.Show(); quotaDetails.Activate();
     }
     void SetVisible(bool visible)
@@ -428,7 +437,7 @@ internal sealed class BarForm : Form
             Gpu = gpu, Startup = Startup.Enabled, States = evaluators.Select(e => e.State.ToString()), MaximizedBounds = maximizedBounds,
             CpuInsights = insights, CpuHistory = cpuHistory.Window(clock.Elapsed.TotalSeconds),
             ContentWidth = flow.Width, GearBounds = gear.Bounds, EnabledBlocks = VisibilityItems().Where(i => i.Get()).Select(i => i.Name), Blocks = flow.Controls.Cast<Control>().Where(c => c.Visible).Select(c => new { c.AccessibleName, c.Text, c.Bounds }),
-            Quotas = quotaSnapshots, TickerBounds = quotaTicker.Bounds, TickerText = QuotaText.Ticker(quotaSnapshots, DateTimeOffset.UtcNow), TickerTags = QuotaText.Tags(quotaSnapshots, DateTimeOffset.UtcNow),
+            Quotas = quotaSnapshots, settings.QuotaVisibility, TickerVisible = quotaTicker.Visible, TickerBounds = quotaTicker.Bounds, TickerText = QuotaText.Ticker(quotaSnapshots, DateTimeOffset.UtcNow, settings.QuotaVisibility), TickerTags = QuotaText.Tags(quotaSnapshots, DateTimeOffset.UtcNow, settings.QuotaVisibility),
             Windows = Application.OpenForms.Cast<Form>().Select(f => new { f.Text, f.Visible, f.Bounds })
         };
         Directory.CreateDirectory(Settings.Folder);

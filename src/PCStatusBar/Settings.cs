@@ -22,11 +22,13 @@ internal sealed class Settings
     public bool ShowDiskC { get; set; } = true;
     public bool ShowDiskD { get; set; } = true;
     public bool ShowQuotas { get; set; } = true;
+    public QuotaVisibility QuotaVisibility { get; set; } = new();
     public void CopyVisibilityFrom(Settings other)
     {
         ShowLeaders = other.ShowLeaders; ShowQueue = other.ShowQueue; ShowCpu = other.ShowCpu;
         ShowGraph = other.ShowGraph; ShowRam = other.ShowRam; ShowDiskC = other.ShowDiskC;
         ShowDiskD = other.ShowDiskD; ShowTemperature = other.ShowTemperature; ShowQuotas = other.ShowQuotas;
+        QuotaVisibility = other.QuotaVisibility;
     }
     public double? GpuYellow { get; set; }
     public double? GpuRed { get; set; }
@@ -36,7 +38,7 @@ internal sealed class Settings
     public static string Folder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PCStatusBar");
     public static string FilePath => Path.Combine(Folder, "settings.json");
     public bool Valid() => Monitor != null && Height is >= 32 and <= 60 && OverlayReferenceWidth is >= 0 and <= 30000 && OverlayLeft is >= 0 and <= 20000 && OverlayRight is >= 0 and <= 20000 && PollSeconds is >= 1 and <= 10 && DiskSeconds is >= 2 and <= 120 &&
-        Cpu is not null && Ram is not null && Disk is not null && Cpu.Valid() && Ram.Valid() && Disk.Valid() && !Cpu.Inverse && !Ram.Inverse && Disk.Inverse &&
+        QuotaVisibility is not null && Cpu is not null && Ram is not null && Disk is not null && Cpu.Valid() && Ram.Valid() && Disk.Valid() && !Cpu.Inverse && !Ram.Inverse && Disk.Inverse &&
         ((!GpuYellow.HasValue && !GpuRed.HasValue) || (GpuYellow > 0 && GpuRed > GpuYellow && GpuRed < 125));
     public static Settings Load()
     {

@@ -29,12 +29,12 @@ internal sealed class QuotaTicker : Control
         MouseEnter += (_, _) => paused = true; MouseLeave += (_, _) => paused = false;
         animation.Start();
     }
-    public void SetQuotas(QuotaSnapshot[] snapshots, DateTimeOffset now)
+    public void SetQuotas(QuotaSnapshot[] snapshots, DateTimeOffset now, QuotaVisibility visibility)
     {
-        string value = QuotaText.Ticker(snapshots, now);
+        string value = QuotaText.Ticker(snapshots, now, visibility);
         if (fingerprint == value) return;
         fingerprint = value; AccessibleDescription = value;
-        groups = QuotaText.Tags(snapshots, now); period = 0;
+        groups = QuotaText.Tags(snapshots, now, visibility); period = 0;
         Invalidate();
     }
     protected override void OnFontChanged(EventArgs e) { base.OnFontChanged(e); boldFont?.Dispose(); boldFont = null; period = 0; }

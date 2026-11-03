@@ -15,13 +15,13 @@ internal sealed class QuotaDetailsForm : Form
         Controls.Add(content); Controls.Add(refresh); Padding = new Padding(16);
         Shown += (_, _) => { content.Select(0, 0); refresh.Focus(); };
     }
-    public void UpdateSnapshots(QuotaSnapshot[] snapshots, DateTimeOffset now)
+    public void UpdateSnapshots(QuotaSnapshot[] snapshots, DateTimeOffset now, QuotaVisibility visibility)
     {
         var lines = new List<string> { "Остатки лимитов аккаунтов. Автообновление раз в минуту.", "Проценты показывают остаток лимита; количество токенов не вычисляется.", "" };
         foreach (var snapshot in snapshots)
         {
             lines.Add(QuotaText.ProviderName(snapshot.Provider) + ":");
-            foreach (var window in QuotaText.VisibleWindows(snapshot))
+            foreach (var window in QuotaText.VisibleWindows(snapshot, visibility))
             {
                 string prefix = QuotaText.ProviderName(snapshot.Provider) + ": ";
                 string windowText = QuotaText.Window(snapshot, window, now);

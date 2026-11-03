@@ -4,6 +4,10 @@
 
 `StatusEvaluator` получает монотонное время, ведёт независимые интервалы жёлтого и красного превышения, допускает прямые переходы, использует запас и выдержку восстановления. Разрывы и отсутствующие данные сбрасывают непрерывность. Интерфейс проверяет свежесть: max(5 секунд, 3 × интервал).
 
+`CpuInsightsProvider` держит один PDH query для языково-независимого `System\Processor Queue Length`, читает его раз в 3 секунды с `PDH_FMT_LONG | PDH_FMT_NOCAP100` и закрывает при выходе. Перечисление процессов выполняется тем же фоновым опросом без пересечения запросов. Снимки CPU time сопоставляются по PID и времени запуска, поэтому повторно использованный PID не наследует чужой CPU. Делитель — реальное время интервала и число активных логических процессоров всех групп. Каждый объект Process освобождается; ошибки прав и завершение процесса изолированы. Данные защищённых процессов могут отсутствовать, поэтому лидеры относятся к доступной выборке.
+
+`ProcessAccounting` вычисляет доли и группирует по имени программы. `ConsumersForm` показывает до 100 отдельных процессов и обновляется теми же измерениями без дополнительного опроса. `CpuHistory` ограничивает выборку последними 60 секундами и максимум 600 точками; штатно это около 60 отсчётов. `CpuGraph` рисует линии только между свежими достоверными соседями, не растягивая короткую историю на всю минуту. История не записывается на диск. Диагностика по явному запросу может включать текущий снимок процессов и историю; она остаётся локальной.
+
 `BarForm` регистрирует AppBar через ABM_NEW / ABM_QUERYPOS / ABM_SETPOS и использует возвращённые координаты. ABM_REMOVE освобождает полосу при скрытии и закрытии. Обработаны уведомления позиции, активации, изменения окна, DPI, экрана, fullscreen, восстановления Explorer и питания. При отсутствии выбранного монитора используется основной; координаты могут быть отрицательными. Для предотвращения рекурсивного позиционирования используются флаги и очередь UI.
 
 `Temperature` использует только уже установленную NVML из System32. GPU #0, sensor GPU core. Нулевые, ошибочные и неправдоподобные значения отвергаются. Пороги не назначаются автоматически; пользователь может ввести собственные в °C. CPU Package не подменяется ACPI-зоной. После отсутствия DLL приложение продолжает работу без этого блока.
@@ -27,6 +31,8 @@
 - [GetSystemTimes](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getsystemtimes)
 - [GlobalMemoryStatusEx](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-globalmemorystatusex)
 - [GetDiskFreeSpaceExW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getdiskfreespaceexw)
+- [PdhAddEnglishCounterW](https://learn.microsoft.com/en-us/windows/win32/api/pdh/nf-pdh-pdhaddenglishcounterw)
+- [PdhGetFormattedCounterValue](https://learn.microsoft.com/en-us/windows/win32/api/pdh/nf-pdh-pdhgetformattedcountervalue)
 - [Application desktop toolbars](https://learn.microsoft.com/en-us/windows/win32/shell/application-desktop-toolbars)
 - [Taskbar pinning](https://learn.microsoft.com/en-us/windows/apps/develop/windows-integration/pin-to-taskbar)
 - [NVML initialization and cleanup](https://docs.nvidia.com/deploy/nvml-api/latest/api/group__nvmlInitializationAndCleanup.html)

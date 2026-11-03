@@ -5,6 +5,8 @@ $source = Join-Path $PSScriptRoot 'artifacts\publish'
 if (!(Test-Path -LiteralPath (Join-Path $source 'PCStatusBar.exe'))) { throw 'Build is missing' }
 $destination = Join-Path $env:LOCALAPPDATA 'Programs\PCStatusBar'
 $exe = Join-Path $destination 'PCStatusBar.exe'
+$startupLink = Join-Path ([Environment]::GetFolderPath('Startup')) 'PCStatusBar.lnk'
+$keepStartup = !(Test-Path -LiteralPath (Join-Path $destination 'installed-files.json')) -or (Test-Path -LiteralPath $startupLink)
 # Only stop the process from our exact installation directory.
 $ownProcesses = @(Get-Process PCStatusBar -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe })
 if ($ownProcesses.Count) {
@@ -27,7 +29,9 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'uninstall.ps1') -Destination $d
 $files = @((Get-ChildItem -LiteralPath $source -File).Name) + 'uninstall.ps1'
 ConvertTo-Json -InputObject $files | Set-Content -LiteralPath $previousManifest -Encoding utf8
 $shell = New-Object -ComObject WScript.Shell
-foreach ($folder in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Startup'))) {
+$shortcutFolders = @([Environment]::GetFolderPath('Programs'))
+if ($keepStartup) { $shortcutFolders += [Environment]::GetFolderPath('Startup') }
+foreach ($folder in $shortcutFolders) {
     $shortcut = $shell.CreateShortcut((Join-Path $folder 'PCStatusBar.lnk'))
     $shortcut.TargetPath = $exe
     $shortcut.WorkingDirectory = $destination

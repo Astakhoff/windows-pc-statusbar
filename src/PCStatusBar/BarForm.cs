@@ -10,6 +10,11 @@ internal sealed class BarForm : Form
     readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
     readonly Stopwatch clock = Stopwatch.StartNew();
     readonly Metrics metrics = new();
+    readonly CpuInsightsProvider insightsProvider = new();
+    readonly CpuHistory cpuHistory = new();
+    readonly CpuGraph cpuGraph = new();
+    readonly Label queueBlock = new() { Text = "Очередь  —", AccessibleName = "Очередь CPU" };
+    readonly Label leadersBlock = new() { Text = "Лидеры CPU  —", AccessibleName = "Основные потребители CPU" };
     readonly Temperature temperature = new();
     readonly NotifyIcon tray;
     readonly ToolTip tips = new() { AutoPopDelay = 15000 };
@@ -19,7 +24,10 @@ internal sealed class BarForm : Form
     Settings settings = Settings.Load();
     StatusEvaluator[] evaluators = [];
     Reading?[] readings = new Reading?[3];
-    bool registered, positioning, busy, closing, positionQueued;
+    bool registered, positioning, busy, closing, positionQueued, resetPending;
+    double lastInsights = -100;
+    CpuInsightsReading? insights;
+    ConsumersForm? consumers;
     double lastPoll = -100, lastDisk = -100;
     double lastTemperature = -100;
     Reading? gpu;
@@ -43,7 +51,17 @@ internal sealed class BarForm : Form
             blocks[i].Paint += (sender, e) => { var label = (Label)sender!; using var brush = new SolidBrush(label.ForeColor); e.Graphics.FillRectangle(brush, 0, 4, 3, Math.Max(1, label.Height - 8)); };
             blocks[i].DoubleClick += (_, _) => OpenSettings();
         }
+        foreach (var block in new[] { queueBlock, leadersBlock })
+        {
+            block.TextAlign = ContentAlignment.MiddleLeft; block.AutoEllipsis = true;
+            block.Padding = new Padding(10, 0, 4, 0); block.BackColor = Color.FromArgb(32, 36, 43); block.ForeColor = Color.Silver;
+        }
+        leadersBlock.Cursor = Cursors.Hand;
+        leadersBlock.Click += (_, _) => OpenConsumers();
+        flow.Controls.Clear();
+        flow.Controls.AddRange([blocks[0], cpuGraph, queueBlock, leadersBlock, blocks[1], blocks[2], blocks[3]]);
         menu.Items.Add("Настройки…", null, (_, _) => OpenSettings());
+        menu.Items.Add("Потребители CPU…", null, (_, _) => OpenConsumers());
         menu.Items.Add("Показать / скрыть панель", null, (_, _) => SetVisible(!Visible));
         var startup = new ToolStripMenuItem("Автозапуск") { CheckOnClick = true };
         startup.Click += (_, _) => { try { Startup.Set(startup.Checked); } catch (Exception e) { MessageBox.Show(e.Message); } };
@@ -54,6 +72,7 @@ internal sealed class BarForm : Form
         menu.Items.Add("Выход", null, (_, _) => Close());
         ContextMenuStrip = menu; flow.ContextMenuStrip = menu;
         foreach (var block in blocks) block.ContextMenuStrip = menu;
+        queueBlock.ContextMenuStrip = leadersBlock.ContextMenuStrip = cpuGraph.ContextMenuStrip = menu;
         tray = new NotifyIcon { Icon = SystemIcons.Information, Text = "PCStatusBar — CPU / RAM / C:", ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += (_, _) => OpenSettings();
         ResetRules(); LayoutBlocks();
@@ -64,22 +83,26 @@ internal sealed class BarForm : Form
     }
     void ResetRules()
     {
+        if (busy) { resetPending = true; return; }
+        resetPending = false;
         evaluators = [new(settings.Cpu, Math.Max(5, 3 * settings.PollSeconds)), new(settings.Ram, Math.Max(5, 3 * settings.PollSeconds)), new(settings.Disk, Math.Max(5, 3 * settings.DiskSeconds))];
         lastPoll = lastDisk = -100; metrics.Reset(); readings = new Reading?[3];
+        cpuHistory.Clear(); insightsProvider.Reset(); insights = null; lastInsights = -100;
     }
     void LayoutBlocks()
     {
         float scale = DeviceDpi / 96F;
-        int[] widths = settings.ShowTemperature ? [130, 305, 285, 180] : [135, 330, 310];
+        (Control control, int width)[] layout = [(blocks[0], 125), (cpuGraph, 230), (queueBlock, 145), (leadersBlock, 660), (blocks[1], 305), (blocks[2], 285), (blocks[3], 130)];
+        blocks[3].Visible = settings.ShowTemperature;
         int available = Screen.FromHandle(Handle).Bounds.Width;
-        float fit = Math.Min(1, available / (float)(widths.Sum() * scale + 40 * scale));
+        float fit = Math.Min(1, available / (float)(layout.Where(x => x.control != blocks[3] || settings.ShowTemperature).Sum(x => x.width + 8) * scale + 12 * scale));
         int total = 0;
-        for (int i = 0; i < blocks.Length; i++)
+        foreach (var (control, width) in layout)
         {
-            blocks[i].Visible = i < widths.Length;
-            if (i >= widths.Length) continue;
-            blocks[i].Width = (int)(widths[i] * scale * fit); blocks[i].Height = Math.Max(24, (int)(settings.Height * scale) - 6);
-            total += blocks[i].Width + 8;
+            if (control == blocks[3] && !settings.ShowTemperature) continue;
+            control.Margin = new Padding((int)(4 * scale), 3, (int)(4 * scale), 3);
+            control.Width = (int)(width * scale * fit); control.Height = Math.Max(24, (int)(settings.Height * scale) - 6);
+            total += control.Width + control.Margin.Horizontal;
         }
         flow.Width = Math.Min(available, total + (int)(12 * scale));
         if (gpu == null) { blocks[3].Text = "GPU  —"; blocks[3].ForeColor = Color.Silver; }
@@ -138,10 +161,24 @@ internal sealed class BarForm : Form
                     ram: poll ? Safe(() => metrics.Ram(now), "RAM", now) : null,
                     disk: disk ? Safe(() => metrics.Disk(now), "C: свободно", now) : null));
                 if (closing) return;
-                if (poll) { readings[0] = result.cpu; readings[1] = result.ram; lastPoll = now; }
+                if (poll) { readings[0] = result.cpu; readings[1] = result.ram; lastPoll = now; cpuHistory.Add(now, result.cpu?.Percent); }
                 if (disk) { readings[2] = result.disk; lastDisk = now; }
             }
             now = clock.Elapsed.TotalSeconds;
+            if (now - lastInsights >= 3)
+            {
+                insights = await Task.Run(() => insightsProvider.Read(now)); lastInsights = now;
+                if (closing) return;
+            }
+            now = clock.Elapsed.TotalSeconds;
+            bool freshInsights = insights != null && now - insights.At <= 9;
+            queueBlock.Text = freshInsights && insights!.Queue.HasValue ? $"Очередь  {insights.Queue}" : "Очередь  —";
+            tips.SetToolTip(queueBlock, $"Число готовых потоков, ожидающих CPU; это не число агентов.\nSystem\\Processor Queue Length (PDH), мгновенный отсчёт раз в 3 секунды.\nЛогических процессоров: {insights?.LogicalProcessors}. Оценивайте очередь вместе с загрузкой CPU; универсальные цветовые пороги не назначены." + (!freshInsights || insights?.Queue == null ? "\nНет свежего достоверного значения." : ""));
+            bool readyProcesses = freshInsights && insights!.HasBaseline;
+            leadersBlock.Text = readyProcesses && insights!.Groups.Length > 0 ? "Лидеры:  " + string.Join("   ·   ", insights.Groups.Take(3).Select(g => $"{g.Name} {g.CpuPercent:0.0}%")) : "Лидеры CPU  —";
+            tips.SetToolTip(leadersBlock, (readyProcesses ? string.Join("\n", insights!.Groups.Take(5).Select(g => $"{g.Name}: {g.CpuPercent:0.00}%, процессов {g.Count}")) : "Ожидание свежего интервала измерения") +
+                $"\nПроценты от всей мощности Windows, группы по имени программы. Интервал 3 с.\nНедоступно / завершилось при чтении: {insights?.Skipped}. Нажмите, чтобы увидеть отдельные PID.");
+            consumers?.UpdateReading(insights, freshInsights);
             if (settings.ShowTemperature && now - lastTemperature >= 2)
             {
                 gpu = await Task.Run(() => temperature.Read(now)); lastTemperature = now;
@@ -168,9 +205,12 @@ internal sealed class BarForm : Form
                 string status = state switch { Severity.Green => "нормальный уровень", Severity.Yellow => "внимание", Severity.Red => "высокий уровень внимания", _ => "нет достоверных свежих данных" };
                 tips.SetToolTip(blocks[i], $"{reading?.Detail}\nСостояние: {status}.\nЖёлтый {rule.Yellow}%, красный {rule.Red}%; ухудшение {rule.RiseSeconds} с, восстановление {rule.RecoverSeconds} с, запас {rule.Margin} п.п. Цвет учитывает устойчивое превышение и восстановление.");
             }
+            cpuGraph.LineColor = blocks[0].ForeColor;
+            cpuGraph.UpdateHistory(cpuHistory.Window(now), now, Math.Max(5, 3 * settings.PollSeconds));
+            tips.SetToolTip(cpuGraph, cpuGraph.AccessibleDescription + ".\nСлева −60 секунд, справа сейчас; вертикальная шкала 0–100%. История только в памяти. Разрывы означают отсутствие отсчётов.");
         }
         catch (Exception e) { Log.Write(e.ToString()); }
-        finally { busy = false; if (closing && !IsDisposed && IsHandleCreated) BeginInvoke(Close); }
+        finally { busy = false; if (resetPending && !closing) ResetRules(); if (closing && !IsDisposed && IsHandleCreated) BeginInvoke(Close); }
     }
     static Reading Safe(Func<Reading> read, string name, double now)
     {
@@ -188,6 +228,14 @@ internal sealed class BarForm : Form
         };
         dialog.Show(); dialog.Activate();
     }
+    void OpenConsumers()
+    {
+        if (consumers != null) { consumers.Activate(); return; }
+        consumers = new ConsumersForm();
+        consumers.FormClosed += (_, _) => { consumers = null; };
+        consumers.UpdateReading(insights, insights != null && clock.Elapsed.TotalSeconds - insights.At <= 9);
+        consumers.Show(); consumers.Activate();
+    }
     void SetVisible(bool visible)
     {
         if (visible) { Show(); Register(); } else { Unregister(); Hide(); }
@@ -202,6 +250,7 @@ internal sealed class BarForm : Form
             Taskbar = taskbar.Rect.Rectangle, TaskbarEdge = taskbar.Edge, TaskbarState = (ulong)Native.SHAppBarMessage(4, ref state),
             Metrics = readings.Select(r => new { r?.Text, r?.Percent, r?.Detail, AgeSeconds = r == null ? (double?)null : clock.Elapsed.TotalSeconds - r.At }),
             Gpu = gpu, Startup = Startup.Enabled, States = evaluators.Select(e => e.State.ToString()), MaximizedBounds = maximizedBounds,
+            CpuInsights = insights, CpuHistory = cpuHistory.Window(clock.Elapsed.TotalSeconds),
             Windows = Application.OpenForms.Cast<Form>().Select(f => new { f.Text, f.Visible, f.Bounds })
         };
         Directory.CreateDirectory(Settings.Folder);
@@ -260,12 +309,12 @@ internal sealed class BarForm : Form
         if (busy) { closing = true; timer.Stop(); Unregister(); e.Cancel = true; return; }
         closing = true; timer.Stop(); Unregister();
         SystemEvents.DisplaySettingsChanged -= DisplayChanged; SystemEvents.PowerModeChanged -= PowerChanged;
-        dialog?.Close(); tray.Visible = false;
+        dialog?.Close(); consumers?.Close(); tray.Visible = false;
         base.OnFormClosing(e);
     }
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { timer.Dispose(); tray.Dispose(); tips.Dispose(); menu.Dispose(); temperature.Dispose(); Font.Dispose(); }
+        if (disposing) { timer.Dispose(); tray.Dispose(); tips.Dispose(); menu.Dispose(); temperature.Dispose(); insightsProvider.Dispose(); Font.Dispose(); }
         base.Dispose(disposing);
     }
 }

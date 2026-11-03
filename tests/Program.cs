@@ -1,0 +1,35 @@
+using PCStatusBar;
+
+int count = 0;
+void Check(bool condition, string name) { if (!condition) throw new Exception(name); Console.WriteLine("PASS " + name); count++; }
+StatusEvaluator Cpu() => new(new() { Yellow = 70, Red = 90, Margin = 5, RiseSeconds = 5, RecoverSeconds = 5 }, 5);
+var delta = new CpuDelta();
+Check(delta.Sample(10, 20, 30) == null, "CPU first sample is baseline");
+Check(delta.Sample(20, 50, 50) == 80, "CPU kernel includes idle");
+Check(delta.Sample(20, 50, 50) == null, "CPU zero delta");
+Check(delta.Sample(0, 0, 0) == null, "CPU reset");
+Check(Units.GiB(1073741824) == 1 && Units.Percent(3, 4) == 75 && Units.Percent(1, 0) == null, "GiB and coherent ratios");
+var c = Cpu();
+c.Update(10, 0); c.Update(95, 1); c.Update(10, 2);
+Check(c.State == Severity.Green, "brief spike ignored");
+c = Cpu(); c.Update(95, 0); c.Update(95, 5);
+Check(c.State == Severity.Red, "direct green to red at exact duration");
+c.Update(65, 6); c.Update(65, 11);
+Check(c.State == Severity.Green, "direct red to green at recovery equality");
+c = Cpu(); c.Update(80, 0); c.Update(95, 1); c.Update(80, 2); c.Update(95, 3); c.Update(80, 4); c.Update(95, 5);
+Check(c.State == Severity.Yellow, "yellow clock independent of red oscillations");
+c.Update(null, 6); Check(c.State == Severity.Unknown, "missing data neutral");
+c.Update(95, 7); Check(c.State == Severity.Green, "missing data resets continuity");
+c.Update(95, 20); Check(c.State == Severity.Green, "stale gap resets continuity");
+c = Cpu(); c.Update(70, 0); c.Update(70, 5); Check(c.State == Severity.Yellow, "yellow equality");
+c.Update(66, 6); c.Update(66, 11); Check(c.State == Severity.Yellow, "hysteresis retains yellow");
+c.Update(65, 12); c.Update(65, 17); Check(c.State == Severity.Green, "yellow recovery equality");
+var disk = new StatusEvaluator(new() { Yellow = 15, Red = 5, Margin = 2, Inverse = true }, 30);
+Check(disk.Update(15, 0) == Severity.Yellow, "disk yellow equality");
+Check(disk.Update(5, 1) == Severity.Red, "disk red equality");
+Check(disk.Update(6.99, 2) == Severity.Red, "disk red hysteresis");
+Check(disk.Update(7, 3) == Severity.Yellow, "disk red recovery equality");
+Check(disk.Update(17, 4) == Severity.Green, "disk yellow recovery equality");
+Check(disk.Update(double.NaN, 5) == Severity.Unknown, "invalid values neutral");
+Check(!new Thresholds { Yellow = 10, Red = 20, Margin = 15 }.Valid(), "unreachable recovery rejected");
+Console.WriteLine($"{count} checks passed");

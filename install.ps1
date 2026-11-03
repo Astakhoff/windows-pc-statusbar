@@ -1,0 +1,41 @@
+param([switch]$SkipBuild, [switch]$NoStart)
+$ErrorActionPreference = 'Stop'
+if (!$SkipBuild) { & (Join-Path $PSScriptRoot 'build.ps1') }
+$source = Join-Path $PSScriptRoot 'artifacts\publish'
+if (!(Test-Path -LiteralPath (Join-Path $source 'PCStatusBar.exe'))) { throw 'Build is missing' }
+$destination = Join-Path $env:LOCALAPPDATA 'Programs\PCStatusBar'
+$exe = Join-Path $destination 'PCStatusBar.exe'
+# Only stop the process from our exact installation directory.
+$ownProcesses = @(Get-Process PCStatusBar -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe })
+if ($ownProcesses.Count) {
+    Start-Process -FilePath $exe -ArgumentList '--exit' -WindowStyle Hidden -Wait
+    foreach ($process in $ownProcesses) {
+        if (!$process.WaitForExit(8000)) { throw 'PCStatusBar did not exit; close it from the tray and retry.' }
+    }
+}
+New-Item -ItemType Directory -Path $destination -Force | Out-Null
+$previousManifest = Join-Path $destination 'installed-files.json'
+if (Test-Path -LiteralPath $previousManifest) {
+    foreach ($name in (Get-Content -LiteralPath $previousManifest -Raw | ConvertFrom-Json)) {
+        if ([IO.Path]::GetFileName($name) -ne $name) { throw 'Invalid install manifest' }
+        $old = Join-Path $destination $name
+        if (Test-Path -LiteralPath $old -PathType Leaf) { Remove-Item -LiteralPath $old }
+    }
+}
+Get-ChildItem -LiteralPath $source -File | Copy-Item -Destination $destination -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'uninstall.ps1') -Destination $destination -Force
+$files = @((Get-ChildItem -LiteralPath $source -File).Name) + 'uninstall.ps1'
+ConvertTo-Json -InputObject $files | Set-Content -LiteralPath $previousManifest -Encoding utf8
+$shell = New-Object -ComObject WScript.Shell
+foreach ($folder in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Startup'))) {
+    $shortcut = $shell.CreateShortcut((Join-Path $folder 'PCStatusBar.lnk'))
+    $shortcut.TargetPath = $exe
+    $shortcut.WorkingDirectory = $destination
+    $shortcut.Description = 'CPU, RAM и свободное место C:'
+    $shortcut.Save()
+    [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)
+}
+[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
+Start-Process -FilePath $exe -ArgumentList '--register-shortcuts' -WindowStyle Hidden -Wait
+if (!$NoStart) { Start-Process -FilePath $exe -WorkingDirectory $destination -WindowStyle Normal }
+Write-Output "Installed: $exe"

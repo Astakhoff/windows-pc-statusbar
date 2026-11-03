@@ -18,3 +18,4 @@ publish/
 logs/
 local/
 settings.local.json
+*.local.json

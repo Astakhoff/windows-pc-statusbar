@@ -24,7 +24,9 @@ Start-Sleep -Seconds 3
 $shown = Snapshot
 if (!$shown.CpuInsights.HasBaseline) { Start-Sleep -Seconds 4; $shown = Snapshot }
 Check ($shown.Visible -and $shown.registered) 'visible registered AppBar'
-Check (@($shown.Metrics | Where-Object { $null -ne $_.Percent }).Count -eq 3) 'all three real Windows metrics available'
+Check (@($shown.Metrics | Where-Object { $null -ne $_.Percent }).Count -eq 4) 'CPU RAM and both real disk metrics available'
+$diskBlocks=@($shown.Blocks | Where-Object AccessibleName -In @('C: свободно','Разделитель дисков','D: свободно'))
+Check (($diskBlocks.AccessibleName -join '|') -eq 'C: свободно|Разделитель дисков|D: свободно') 'C separator D display order'
 Check ($null -ne $shown.CpuInsights.Queue -and $shown.CpuInsights.Queue -ge 0) 'real CPU queue counter available'
 Check ($shown.CpuInsights.HasBaseline -and @($shown.CpuInsights.Groups).Count -gt 0) 'real CPU consumers measured over interval'
 Check (@($shown.CpuHistory | Where-Object { $null -ne $_.Value }).Count -gt 0) 'CPU graph contains measured samples'

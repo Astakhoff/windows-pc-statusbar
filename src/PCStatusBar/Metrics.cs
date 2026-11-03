@@ -23,10 +23,11 @@ internal sealed class Metrics
         var percent = Units.Percent(used, memory.TotalPhysical);
         return new(percent, $"RAM  {percent:0}%   {Units.GiB(used):0.0} / {Units.GiB(memory.TotalPhysical):0.0} GiB", $"Физическая память Windows, GlobalMemoryStatusEx; занято = всего − доступно; {percent:0.00}%", now);
     }
-    public Reading Disk(double now)
+    public Reading Disk(string root, double now)
     {
-        if (!Native.GetDiskFreeSpaceEx(@"C:\", out var available, out var total, out _)) return new(null, "C: свободно  —", "GetDiskFreeSpaceExW: C:\\ недоступен", now);
+        string label = root.TrimEnd('\\') + " свободно";
+        if (!Native.GetDiskFreeSpaceEx(root, out var available, out var total, out _)) return new(null, label + "  —", $"GetDiskFreeSpaceExW: {root} недоступен", now);
         var percent = Units.Percent(available, total);
-        return new(percent, $"C: свободно  {Units.GiB(available):0.0} GiB   {percent:0}%", $"C:\\, доступно текущему пользователю {Units.GiB(available):0.00} из {Units.GiB(total):0.00} GiB (с учётом квот). GetDiskFreeSpaceExW; {percent:0.00}%", now);
+        return new(percent, $"{label}  {Units.GiB(available):0.0} GiB   {percent:0}%", $"{root}, доступно текущему пользователю {Units.GiB(available):0.00} из {Units.GiB(total):0.00} GiB (с учётом квот). GetDiskFreeSpaceExW; {percent:0.00}%", now);
     }
 }

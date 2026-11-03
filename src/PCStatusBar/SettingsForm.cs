@@ -21,8 +21,8 @@ internal sealed class SettingsForm : Form
         Row("Монитор", monitor); apply.Add(() => Value.Monitor = monitor.SelectedIndex == 0 ? "" : monitor.Text);
         Number("Высота панели (логические px)", Value.Height, 32, 60, v => Value.Height = (int)v);
         Number("CPU / RAM: интервал (сек.)", Value.PollSeconds, 1, 10, v => Value.PollSeconds = (int)v);
-        Number("C: интервал (сек.)", Value.DiskSeconds, 2, 120, v => Value.DiskSeconds = (int)v);
-        foreach (var (label, rule) in new[] { ("CPU", Value.Cpu), ("RAM", Value.Ram), ("C: свободно", Value.Disk) })
+        Number("C: / D: интервал (сек.)", Value.DiskSeconds, 2, 120, v => Value.DiskSeconds = (int)v);
+        foreach (var (label, rule) in new[] { ("CPU", Value.Cpu), ("RAM", Value.Ram), ("C: и D: свободно", Value.Disk) })
         {
             Row(label + (rule.Inverse ? " — ниже хуже" : " — выше хуже"), new Label());
             Number("Жёлтый порог (%)", rule.Yellow, 0, 100, v => rule.Yellow = v);

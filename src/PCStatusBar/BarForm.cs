@@ -22,15 +22,16 @@ internal sealed class BarForm : Form
     QuotaDetailsForm? quotaDetails;
     readonly Label queueBlock = new() { Text = "Очередь  —", AccessibleName = "Очередь CPU" };
     readonly Label leadersBlock = new() { Text = "Лидеры CPU  —", AccessibleName = "Основные потребители CPU" };
+    readonly Label diskSeparator = new() { Text = "—", TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.DimGray, AccessibleName = "Разделитель дисков" };
     readonly Temperature temperature = new();
     readonly NotifyIcon tray;
     readonly ToolTip tips = new() { AutoPopDelay = 15000 };
     readonly ContextMenuStrip menu = new();
-    readonly Label[] blocks = new Label[4];
+    readonly Label[] blocks = new Label[5];
     readonly FlowLayoutPanel flow = new() { Dock = DockStyle.Right, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, AutoSize = false, Padding = new Padding(0) };
     Settings settings = Settings.Load();
     StatusEvaluator[] evaluators = [];
-    Reading?[] readings = new Reading?[3];
+    Reading?[] readings = new Reading?[4];
     bool registered, positioning, busy, closing, positionQueued, resetPending;
     double lastInsights = -100;
     CpuInsightsReading? insights;
@@ -55,7 +56,7 @@ internal sealed class BarForm : Form
         quotaTicker.Click += (_, _) => OpenQuotaDetails();
         for (int i = 0; i < blocks.Length; i++)
         {
-            blocks[i] = new Label { Text = new[] { "CPU  —", "RAM  —", "C: свободно  —", "GPU  —" }[i], TextAlign = ContentAlignment.MiddleLeft, AutoSize = false, AutoEllipsis = true, Margin = new Padding(4, 3, 4, 3), Padding = new Padding(10, 0, 4, 0), BackColor = Color.FromArgb(32, 36, 43), AccessibleName = new[] { "CPU", "RAM", "C: свободно", "Температуры" }[i] };
+            blocks[i] = new Label { Text = new[] { "CPU  —", "RAM  —", "C: свободно  —", "D: свободно  —", "GPU  —" }[i], TextAlign = ContentAlignment.MiddleLeft, AutoSize = false, AutoEllipsis = true, Margin = new Padding(4, 3, 4, 3), Padding = new Padding(10, 0, 4, 0), BackColor = Color.FromArgb(32, 36, 43), AccessibleName = new[] { "CPU", "RAM", "C: свободно", "D: свободно", "Температуры" }[i] };
             flow.Controls.Add(blocks[i]);
             blocks[i].Paint += (sender, e) => { var label = (Label)sender!; using var brush = new SolidBrush(label.ForeColor); e.Graphics.FillRectangle(brush, 0, 4, 3, Math.Max(1, label.Height - 8)); };
             blocks[i].DoubleClick += (_, _) => OpenSettings();
@@ -68,7 +69,7 @@ internal sealed class BarForm : Form
         leadersBlock.Cursor = Cursors.Hand;
         leadersBlock.Click += (_, _) => OpenConsumers();
         flow.Controls.Clear();
-        flow.Controls.AddRange([leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], blocks[3]]);
+        flow.Controls.AddRange([leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], diskSeparator, blocks[3], blocks[4]]);
         menu.Items.Add("Настройки…", null, (_, _) => OpenSettings());
         menu.Items.Add("Потребители CPU…", null, (_, _) => OpenConsumers());
         menu.Items.Add("Лимиты Codex и Claude…", null, (_, _) => OpenQuotaDetails());
@@ -82,7 +83,7 @@ internal sealed class BarForm : Form
         menu.Items.Add("Выход", null, (_, _) => Close());
         ContextMenuStrip = menu; flow.ContextMenuStrip = menu;
         foreach (var block in blocks) block.ContextMenuStrip = menu;
-        queueBlock.ContextMenuStrip = leadersBlock.ContextMenuStrip = cpuGraph.ContextMenuStrip = menu;
+        queueBlock.ContextMenuStrip = leadersBlock.ContextMenuStrip = cpuGraph.ContextMenuStrip = diskSeparator.ContextMenuStrip = menu;
         quotaTicker.ContextMenuStrip = menu;
         tray = new NotifyIcon { Icon = SystemIcons.Information, Text = "PCStatusBar — CPU / RAM / C:", ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += (_, _) => OpenSettings();
@@ -96,17 +97,17 @@ internal sealed class BarForm : Form
     {
         if (busy) { resetPending = true; return; }
         resetPending = false;
-        evaluators = [new(settings.Cpu, Math.Max(5, 3 * settings.PollSeconds)), new(settings.Ram, Math.Max(5, 3 * settings.PollSeconds)), new(settings.Disk, Math.Max(5, 3 * settings.DiskSeconds))];
-        lastPoll = lastDisk = -100; metrics.Reset(); readings = new Reading?[3];
+        evaluators = [new(settings.Cpu, Math.Max(5, 3 * settings.PollSeconds)), new(settings.Ram, Math.Max(5, 3 * settings.PollSeconds)), new(settings.Disk, Math.Max(5, 3 * settings.DiskSeconds)), new(settings.Disk, Math.Max(5, 3 * settings.DiskSeconds))];
+        lastPoll = lastDisk = -100; metrics.Reset(); readings = new Reading?[4];
         cpuHistory.Clear(); insightsProvider.Reset(); insights = null; lastInsights = -100;
     }
     void LayoutBlocks()
     {
         float scale = DeviceDpi / 96F;
-        Control[] layout = [leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], blocks[3]];
+        Control[] layout = [leadersBlock, queueBlock, blocks[0], cpuGraph, blocks[1], blocks[2], diskSeparator, blocks[3], blocks[4]];
         int available = Screen.FromHandle(Handle).Bounds.Width;
         int gap = Math.Max(2, (int)(3 * scale)), endPadding = (int)(8 * scale);
-        var visible = layout.Where(c => c != blocks[3] || settings.ShowTemperature).ToArray();
+        var visible = layout.Where(c => c != blocks[4] || settings.ShowTemperature).ToArray();
         var widths = visible.Select(control => control is Label label
             ? label.GetPreferredSize(new Size(int.MaxValue, int.MaxValue)).Width + (int)Math.Ceiling(4 * scale)
             : (int)(144 * scale)).ToArray();
@@ -123,7 +124,7 @@ internal sealed class BarForm : Form
         SuspendLayout(); flow.SuspendLayout();
         try
         {
-            blocks[3].Visible = settings.ShowTemperature;
+            blocks[4].Visible = settings.ShowTemperature;
             int total = endPadding;
             for (int i = 0; i < visible.Length; i++)
             {
@@ -191,10 +192,11 @@ internal sealed class BarForm : Form
             {
                 var result = await Task.Run(() => (cpu: poll ? Safe(() => metrics.Cpu(now), "CPU", now) : null,
                     ram: poll ? Safe(() => metrics.Ram(now), "RAM", now) : null,
-                    disk: disk ? Safe(() => metrics.Disk(now), "C: свободно", now) : null));
+                    disk: disk ? Safe(() => metrics.Disk(@"C:\", now), "C: свободно", now) : null,
+                    diskD: disk ? Safe(() => metrics.Disk(@"D:\", now), "D: свободно", now) : null));
                 if (closing) return;
                 if (poll) { readings[0] = result.cpu; readings[1] = result.ram; lastPoll = now; cpuHistory.Add(now, result.cpu?.Percent); }
-                if (disk) { readings[2] = result.disk; lastDisk = now; }
+                if (disk) { readings[2] = result.disk; readings[3] = result.diskD; lastDisk = now; }
             }
             now = clock.Elapsed.TotalSeconds;
             if (now - lastInsights >= 3)
@@ -219,21 +221,21 @@ internal sealed class BarForm : Form
             if (settings.ShowTemperature)
             {
                 bool fresh = gpu != null && now - gpu.At <= 6 && gpu.Percent.HasValue;
-                blocks[3].Text = fresh ? gpu!.Text : "GPU  —";
-                blocks[3].ForeColor = !fresh || !settings.GpuYellow.HasValue ? Color.Silver :
+                blocks[4].Text = fresh ? gpu!.Text : "GPU  —";
+                blocks[4].ForeColor = !fresh || !settings.GpuYellow.HasValue ? Color.Silver :
                     gpu!.Percent >= settings.GpuRed ? Color.FromArgb(255, 119, 125) :
                     gpu.Percent >= settings.GpuYellow ? Color.FromArgb(250, 209, 94) : Color.FromArgb(115, 214, 158);
-                tips.SetToolTip(blocks[3], gpu?.Detail + (settings.GpuYellow.HasValue ? $"\nВаши пороги внимания: {settings.GpuYellow} / {settings.GpuRed} °C." : "\nПороги не настроены: число показано нейтрально."));
+                tips.SetToolTip(blocks[4], gpu?.Detail + (settings.GpuYellow.HasValue ? $"\nВаши пороги внимания: {settings.GpuYellow} / {settings.GpuRed} °C." : "\nПороги не настроены: число показано нейтрально."));
             }
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < readings.Length; i++)
             {
                 var reading = readings[i];
-                double stale = Math.Max(5, 3 * (i == 2 ? settings.DiskSeconds : settings.PollSeconds));
+                double stale = Math.Max(5, 3 * (i >= 2 ? settings.DiskSeconds : settings.PollSeconds));
                 double? value = reading != null && now - reading.At <= stale ? reading.Percent : null;
                 var state = evaluators[i].Update(value, now);
-                blocks[i].Text = (reading?.Text ?? new[] { "CPU  —", "RAM  —", "C: свободно  —" }[i]) + (reading != null && now - reading.At > stale ? " (устарело)" : "");
+                blocks[i].Text = (reading?.Text ?? new[] { "CPU  —", "RAM  —", "C: свободно  —", "D: свободно  —" }[i]) + (reading != null && now - reading.At > stale ? " (устарело)" : "");
                 blocks[i].ForeColor = state switch { Severity.Green => Color.FromArgb(115, 214, 158), Severity.Yellow => Color.FromArgb(250, 209, 94), Severity.Red => Color.FromArgb(255, 119, 125), _ => Color.Silver };
-                var rule = new[] { settings.Cpu, settings.Ram, settings.Disk }[i];
+                var rule = new[] { settings.Cpu, settings.Ram, settings.Disk, settings.Disk }[i];
                 string status = state switch { Severity.Green => "нормальный уровень", Severity.Yellow => "внимание", Severity.Red => "высокий уровень внимания", _ => "нет достоверных свежих данных" };
                 tips.SetToolTip(blocks[i], $"{reading?.Detail}\nСостояние: {status}.\nЖёлтый {rule.Yellow}%, красный {rule.Red}%; ухудшение {rule.RiseSeconds} с, восстановление {rule.RecoverSeconds} с, запас {rule.Margin} п.п. Цвет учитывает устойчивое превышение и восстановление.");
             }

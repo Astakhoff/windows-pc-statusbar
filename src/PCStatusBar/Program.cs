@@ -9,6 +9,12 @@ internal static class Program
     {
         Pinning.SetCurrentProcessExplicitAppUserModelID(Pinning.AppId);
         if (args.Contains("--register-shortcuts")) { ShortcutIdentity.Register(); return; }
+        if (args.Contains("--enable-startup") || args.Contains("--disable-startup"))
+        {
+            try { Startup.Set(args.Contains("--enable-startup")); }
+            catch (Exception e) { Log.Write("Startup: " + e); Environment.ExitCode = 1; }
+            return;
+        }
         using var mutex = new Mutex(true, @"Local\PCStatusBar.v1", out bool first);
         if (!first)
         {
@@ -16,7 +22,7 @@ internal static class Program
             int command = args.Contains("--exit") ? 1 : args.Contains("--hide") ? 2 : args.Contains("--show") ? 3 : args.Contains("--diagnostics") ? 4 : args.Contains("--inspect") ? 5 : args.Contains("--end-inspect") ? 6 : args.Contains("--check-maximized") ? 7 : args.Contains("--taskbar-overlay") ? 8 : args.Contains("--appbar") ? 9 : args.Contains("--taskbar-regions") ? 10 : args.Contains("--preview-width") ? 11 : 0;
             int previewIndex = Array.IndexOf(args, "--preview-width"), width = 0;
             if (previewIndex >= 0 && previewIndex + 1 < args.Length) int.TryParse(args[previewIndex + 1], out width);
-            if (hwnd != 0) Native.PostMessage(hwnd, ControlMessage, command, width);
+            if (hwnd != 0 && !args.Contains("--startup")) Native.PostMessage(hwnd, ControlMessage, command, width);
             return;
         }
         if (args.Contains("--exit")) return;

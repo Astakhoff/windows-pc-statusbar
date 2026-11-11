@@ -31,7 +31,14 @@ Check (($diskBlocks.AccessibleName -join '|') -eq 'C: свободно|D: сво
 Check ($null -ne $shown.CpuInsights.Queue -and $shown.CpuInsights.Queue -ge 0) 'real CPU queue counter available'
 Check ($shown.CpuInsights.HasBaseline -and @($shown.CpuInsights.Groups).Count -gt 0) 'real CPU consumers measured over interval'
 Check (@($shown.CpuHistory | Where-Object { $null -ne $_.Value }).Count -gt 0) 'CPU graph contains measured samples'
-Check (@($shown.TickerTags).Count -eq 3 -and @($shown.TickerTags | Where-Object { $_.Provider -eq 'Codex' -and $_.Period -ne 'week' }).Count -eq 0) 'three tagged items with Codex short window hidden'
+$expectedTags=@()
+foreach($provider in @('Claude','Codex')) {
+    foreach($period in @('FiveHour','Week')) {
+        if($shown.QuotaVisibility.($provider+$period)) { $expectedTags += $provider+':'+$(if($period -eq 'Week'){'week'}else{'5 часов'}) }
+    }
+}
+$actualTags=@($shown.TickerTags|ForEach-Object {$_.Provider+':'+$_.Period})
+Check ((($expectedTags|Sort-Object) -join '|') -eq (($actualTags|Sort-Object) -join '|')) 'quota tags follow saved window selections'
 Check ($shown.TickerBounds.Width -gt 0 -and $shown.TickerBounds.Right -le ($shown.Bounds.Width - $shown.ContentWidth)) 'ticker stays to the left of system blocks'
 $protected=$true
 if($shown.TaskbarOverlay -and $shown.OverlayAdaptive){
@@ -68,9 +75,13 @@ Start-Sleep -Seconds 3
 $restarted = Snapshot
 Check (($restarted.TaskbarOverlay -or $restarted.registered) -and $restarted.Bounds.Top -eq $shown.Bounds.Top) 'exit and restart preserve selected placement'
 $shell = New-Object -ComObject WScript.Shell
-foreach ($folder in @([Environment]::GetFolderPath('Programs'),[Environment]::GetFolderPath('Startup'))) {
+foreach ($folder in @([Environment]::GetFolderPath('Programs'))) {
     $link = Join-Path $folder 'PCStatusBar.lnk'
     Check ((Test-Path -LiteralPath $link) -and $shell.CreateShortcut($link).TargetPath -eq $exe) "shortcut targets installed executable: $(Split-Path $folder -Leaf)"
 }
 [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
+$taskName='PCStatusBar-'+[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$task=Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+Check ($task.Settings.Enabled -and $task.Actions.Execute -eq $exe -and $task.Actions.Arguments -eq '--startup') 'enabled startup task targets installed executable'
+Check ($task.Triggers.Delay -eq 'PT15S' -and $task.Principal.LogonType -eq 'Interactive' -and $task.Settings.ExecutionTimeLimit -eq 'PT0S') 'startup waits for login desktop and has no runtime limit'
 Write-Output 'Installed smoke checks passed. Panel left running.'

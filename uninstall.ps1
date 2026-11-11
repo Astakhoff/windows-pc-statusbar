@@ -3,6 +3,10 @@ $ErrorActionPreference = 'Stop'
 $destination = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'Programs\PCStatusBar'))
 if ([IO.Path]::GetFileName($destination) -ne 'PCStatusBar') { throw 'Invalid installation directory' }
 $exe = Join-Path $destination 'PCStatusBar.exe'
+if (Test-Path -LiteralPath $exe) {
+    $startupProcess = Start-Process -FilePath $exe -ArgumentList '--disable-startup' -WindowStyle Hidden -PassThru -Wait
+    if ($startupProcess.ExitCode -ne 0) { throw 'Could not remove PCStatusBar startup task' }
+}
 $ownProcesses = @(Get-Process PCStatusBar -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe })
 if ($ownProcesses.Count) {
     Start-Process -FilePath $exe -ArgumentList '--exit' -WindowStyle Hidden -Wait

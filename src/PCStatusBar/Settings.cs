@@ -79,31 +79,3 @@ internal static class Log
         catch { /* Diagnostics must never interrupt monitoring. */ }
     }
 }
-
-internal static class Startup
-{
-    public static string Link => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "PCStatusBar.lnk");
-    public static bool Enabled => File.Exists(Link);
-    public static void Set(bool enabled)
-    {
-        if (!enabled) { if (File.Exists(Link)) File.Delete(Link); return; }
-        Type type = Type.GetTypeFromProgID("WScript.Shell")!;
-        object shell = Activator.CreateInstance(type)!;
-        object? shortcut = null;
-        try
-        {
-            dynamic s = shell;
-            shortcut = s.CreateShortcut(Link);
-            dynamic link = shortcut;
-            link.TargetPath = Environment.ProcessPath!;
-            link.WorkingDirectory = AppContext.BaseDirectory;
-            link.Save();
-            ShortcutIdentity.Set(Link);
-        }
-        finally
-        {
-            if (shortcut != null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);
-            System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
-        }
-    }
-}

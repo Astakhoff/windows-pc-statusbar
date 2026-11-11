@@ -1,4 +1,4 @@
-param([switch]$SkipBuild, [switch]$NoStart)
+param([switch]$SkipBuild, [switch]$NoStart, [switch]$EnableStartup)
 $ErrorActionPreference = 'Stop'
 if (!$SkipBuild) { & (Join-Path $PSScriptRoot 'build.ps1') }
 $source = Join-Path $PSScriptRoot 'artifacts\publish'
@@ -7,6 +7,10 @@ $destination = Join-Path $env:LOCALAPPDATA 'Programs\PCStatusBar'
 $exe = Join-Path $destination 'PCStatusBar.exe'
 $startupLink = Join-Path ([Environment]::GetFolderPath('Startup')) 'PCStatusBar.lnk'
 $keepStartup = !(Test-Path -LiteralPath (Join-Path $destination 'installed-files.json')) -or (Test-Path -LiteralPath $startupLink)
+$taskName = 'PCStatusBar-' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+if ($existingTask) { $keepStartup = $existingTask.Settings.Enabled }
+if ($EnableStartup) { $keepStartup = $true }
 # Only stop the process from our exact installation directory.
 $ownProcesses = @(Get-Process PCStatusBar -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe })
 if ($ownProcesses.Count) {
@@ -30,7 +34,6 @@ $files = @((Get-ChildItem -LiteralPath $source -File).Name) + 'uninstall.ps1'
 ConvertTo-Json -InputObject $files | Set-Content -LiteralPath $previousManifest -Encoding utf8
 $shell = New-Object -ComObject WScript.Shell
 $shortcutFolders = @([Environment]::GetFolderPath('Programs'))
-if ($keepStartup) { $shortcutFolders += [Environment]::GetFolderPath('Startup') }
 foreach ($folder in $shortcutFolders) {
     $shortcut = $shell.CreateShortcut((Join-Path $folder 'PCStatusBar.lnk'))
     $shortcut.TargetPath = $exe
@@ -41,5 +44,8 @@ foreach ($folder in $shortcutFolders) {
 }
 [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
 Start-Process -FilePath $exe -ArgumentList '--register-shortcuts' -WindowStyle Hidden -Wait
+$startupArgument = if ($keepStartup) { '--enable-startup' } else { '--disable-startup' }
+$startupProcess = Start-Process -FilePath $exe -ArgumentList $startupArgument -WindowStyle Hidden -PassThru -Wait
+if ($startupProcess.ExitCode -ne 0) { throw 'Could not configure PCStatusBar startup; see its events.log' }
 if (!$NoStart) { Start-Process -FilePath $exe -WorkingDirectory $destination -WindowStyle Normal }
 Write-Output "Installed: $exe"

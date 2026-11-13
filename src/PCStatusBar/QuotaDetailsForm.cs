@@ -7,7 +7,7 @@ internal sealed class QuotaDetailsForm : Form
     public event EventHandler? RefreshRequested;
     public QuotaDetailsForm()
     {
-        Text = "PCStatusBar — лимиты Codex и Claude"; Size = new Size(800, 560); MinimumSize = new Size(600, 400);
+        Text = "PCStatusBar — лимиты Codex и Claude"; Icon = AppIcon.Image; Size = new Size(800, 560); MinimumSize = new Size(600, 400);
         Font = detailsFont;
         AutoScaleMode = AutoScaleMode.Dpi; StartPosition = FormStartPosition.CenterScreen;
         var refresh = new Button { Text = "Обновить", Dock = DockStyle.Bottom, Height = 36 };

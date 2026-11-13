@@ -38,7 +38,8 @@ foreach ($folder in $shortcutFolders) {
     $shortcut = $shell.CreateShortcut((Join-Path $folder 'PCStatusBar.lnk'))
     $shortcut.TargetPath = $exe
     $shortcut.WorkingDirectory = $destination
-    $shortcut.Description = 'CPU, RAM и свободное место C:'
+    $shortcut.Description = 'CPU, RAM и свободное место C: / D:'
+    $shortcut.IconLocation = $exe + ',0'
     $shortcut.Save()
     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)
 }

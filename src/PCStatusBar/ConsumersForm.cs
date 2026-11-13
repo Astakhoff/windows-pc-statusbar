@@ -8,7 +8,7 @@ internal sealed class ConsumersForm : Form
     bool? wasFresh;
     public ConsumersForm()
     {
-        Text = "PCStatusBar — потребители CPU"; Size = new Size(700, 650); MinimumSize = new Size(540, 400);
+        Text = "PCStatusBar — потребители CPU"; Icon = AppIcon.Image; Size = new Size(700, 650); MinimumSize = new Size(540, 400);
         AutoScaleMode = AutoScaleMode.Dpi; StartPosition = FormStartPosition.CenterScreen;
         list.Columns.Add("Процесс", 340); list.Columns.Add("PID", 100); list.Columns.Add("CPU, % компьютера", 180);
         Controls.Add(list); Controls.Add(explanation);

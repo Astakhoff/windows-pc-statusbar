@@ -58,7 +58,7 @@ internal sealed class BarForm : Form
 
     public BarForm()
     {
-        Text = Program.WindowTitle; FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false;
+        Text = Program.WindowTitle; Icon = AppIcon.Image; FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual; AutoScaleMode = AutoScaleMode.Dpi;
         BackColor = Color.FromArgb(23, 26, 32); ForeColor = Color.White; DoubleBuffered = true;
         Font = new Font("Segoe UI", 10F);
@@ -104,7 +104,7 @@ internal sealed class BarForm : Form
         queueBlock.ContextMenuStrip = leadersBlock.ContextMenuStrip = cpuGraph.ContextMenuStrip = menu;
         quotaTicker.ContextMenuStrip = menu;
         moreBlock.ContextMenuStrip = menu;
-        tray = new NotifyIcon { Icon = SystemIcons.Information, Text = "PCStatusBar — CPU / RAM / C:", ContextMenuStrip = menu, Visible = true };
+        tray = new NotifyIcon { Icon = AppIcon.Image, Text = "PCStatusBar — CPU / RAM / C: / D:", ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += (_, _) => OpenSettings();
         ResetRules(); LayoutBlocks();
         timer.Tick += async (_, _) => await TickAsync();

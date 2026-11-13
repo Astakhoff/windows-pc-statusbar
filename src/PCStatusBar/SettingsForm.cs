@@ -8,7 +8,7 @@ internal sealed class SettingsForm : Form
     public SettingsForm(Settings current)
     {
         Value = System.Text.Json.JsonSerializer.Deserialize<Settings>(System.Text.Json.JsonSerializer.Serialize(current))!;
-        Text = "PCStatusBar — настройки"; Size = new Size(650, 750); MinimumSize = new Size(600, 480);
+        Text = "PCStatusBar — настройки"; Icon = AppIcon.Image; Size = new Size(650, 750); MinimumSize = new Size(600, 480);
         StartPosition = FormStartPosition.CenterScreen; AutoScaleMode = AutoScaleMode.Dpi;
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 72)); table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28));
         Controls.Add(table);
